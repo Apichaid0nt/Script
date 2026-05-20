@@ -455,13 +455,13 @@ local function findAllMobTarget()
     local f = workspace:FindFirstChild("Enemies")
     if not f then return nil end
     for _, child in ipairs(f:GetChildren()) do
-        if child.Name == "Training Dummy" then continue end
+        if child.Name == "TrainingDummy" then continue end
         if child:FindFirstChildOfClass("Humanoid") then
             local h = child:FindFirstChildOfClass("Humanoid")
             if h and h.Health > 0 then return child end
         else
             for _, mob in ipairs(child:GetChildren()) do
-                if mob.Name == "Training Dummy" then continue end
+                if mob.Name == "TrainingDummy" then continue end
                 local h = mob:FindFirstChildOfClass("Humanoid")
                 if h and h.Health > 0 then return mob end
             end
