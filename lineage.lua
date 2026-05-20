@@ -1,7 +1,3 @@
--- ============================================================
---  Nobody Hub | by Dx
--- ============================================================
-
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local CoreGui = game:GetService("CoreGui")
@@ -10,23 +6,21 @@ if CoreGui:FindFirstChild("FluentToggleButtonGui") or (getgenv and getgenv().Nob
 end
 pcall(function() getgenv().NobodyHub_LOADED = true end)
 
+local MarketplaceService = game:GetService("MarketplaceService")
+local success, gameInfo = pcall(function()
+    return MarketplaceService:GetProductInfo(game.PlaceId)
+end)
+
 local Fluent           = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
 
--- ── Services ─────────────────────────────────────────────────
 local UserInputService = game:GetService("UserInputService")
 local Players          = game:GetService("Players")
 local HttpService      = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 
--- ╔══════════════════════════════════════════════════════════╗
---  SAVE SYSTEM  —  NobodyHub/[GameName]/state.json
--- ╚══════════════════════════════════════════════════════════╝
-
-local GAME_NAME   = (game.Name ~= "" and game.Name or tostring(game.PlaceId))
-                        :gsub("[^%w%s%-]", ""):gsub("%s+", "_")
-local GAME_FOLDER = "NobodyHub/" .. GAME_NAME
+local GAME_FOLDER = "NobodyHub/" .. game.GameId
 local SAVE_FILE   = GAME_FOLDER .. "/state.json"
 local AE_URL      = "https://raw.githubusercontent.com/Apichaid0nt/Script/Main/lineage.lua"
 
@@ -54,7 +48,6 @@ local function saveState(st)
             selectedSummonBoss          = st.selectedSummonBoss,
             autoSummonBoss              = st.autoSummonBoss,
             selectedGilgameshDifficulty = st.selectedGilgameshDifficulty,
-
             autoAttackAllMob            = st.autoAttackAllMob,
             autoOre                     = st.autoOre,
             hopThreshold                = st.hopThreshold,
@@ -75,10 +68,6 @@ local function loadSavedState()
     local ok2, data = pcall(function() return HttpService:JSONDecode(raw) end)
     return (ok2 and type(data) == "table") and data or nil
 end
-
--- ╔══════════════════════════════════════════════════════════╗
---  TOGGLE BUTTON + DRAG
--- ╚══════════════════════════════════════════════════════════╝
 
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name           = "FluentToggleButtonGui"
@@ -137,12 +126,8 @@ UserInputService.InputChanged:Connect(function(inp)
     end
 end)
 
--- ╔══════════════════════════════════════════════════════════╗
---  WINDOW
--- ╚══════════════════════════════════════════════════════════╝
-
 local Window = Fluent:CreateWindow({
-    Title       = "Nobody " .. Fluent.Version,
+    Title       = "Nobody | " .. gameInfo.Name,
     SubTitle    = "by Dx",
     TabWidth    = 160,
     Size        = UDim2.fromOffset(580, 460),
@@ -169,59 +154,42 @@ local Tabs = {
 
 local Options = Fluent.Options
 
--- ╔══════════════════════════════════════════════════════════╗
---  STATE  (load saved values or use defaults)
--- ╚══════════════════════════════════════════════════════════╝
-
 local saved = loadSavedState() or {}
 
 local State = {
-    -- Settings
     selectedWeapon = saved.selectedWeapon or "None",
     bringMob       = saved.bringMob       or false,
     method         = saved.method         or "above",
     distance       = saved.distance       or 5,
 
-    -- Main
     selectedSkills = saved.selectedSkills or {"z"},
     autoSkill      = saved.autoSkill      or false,
-    selectedMob    = saved.selectedMob    or "None",
+    selectedMob    = (type(saved.selectedMob) == "table" and saved.selectedMob) or {},
     autoMob        = saved.autoMob        or false,
     selectedBoss   = (type(saved.selectedBoss) == "table" and saved.selectedBoss) or {"Rimuru"},
     autoBoss       = saved.autoBoss       or false,
 
-    -- Auto Attack toggle
     autoAttack     = saved.autoAttack or false,
 
-    -- Summon
     summonSlimeAmount            = saved.summonSlimeAmount            or "1",
     selectedSummonBoss           = saved.selectedSummonBoss           or "Verdant Hero",
     autoSummonBoss               = saved.autoSummonBoss               or false,
     selectedGilgameshDifficulty  = saved.selectedGilgameshDifficulty  or "Easy",
 
-    -- Auto Attack All Mob
     autoAttackAllMob = saved.autoAttackAllMob or false,
 
-    -- Ore
     autoOre     = saved.autoOre     or false,
 
-    -- Hop
-    hopThreshold = saved.hopThreshold or 5,
+    hopThreshold = saved.hopThreshold or 4,
     autoHop      = saved.autoHop      or false,
 
-    -- Dungeon
     selectedDungeonKey        = saved.selectedDungeonKey        or "RAIDEN",
     selectedDungeonDifficulty = saved.selectedDungeonDifficulty or "Easy",
     autoDungeon               = saved.autoDungeon               or false,
     autoStartReplay           = saved.autoStartReplay           or false,
 
-    -- Auto Execute
     autoExecute = saved.autoExecute or false,
 }
-
--- ╔══════════════════════════════════════════════════════════╗
---  DATA HELPERS
--- ╚══════════════════════════════════════════════════════════╝
 
 local function getChar()
     return LocalPlayer.Character
@@ -255,20 +223,17 @@ local function getWeaponList()
     return #list > 0 and list or {"None"}
 end
 
--- ── Mob list (supports 2 levels: Enemies.[folder].[mob]) ────────
 local function getMobList()
     local list, seen = {}, {}
     local f = workspace:FindFirstChild("Enemies")
     if f then
         for _, child in ipairs(f:GetChildren()) do
             if child:FindFirstChildOfClass("Humanoid") then
-                -- first level: direct model
                 if not seen[child.Name] then
                     seen[child.Name] = true
                     table.insert(list, child.Name)
                 end
             else
-                -- first level is a folder → second level is mob model
                 for _, mob in ipairs(child:GetChildren()) do
                     if mob:FindFirstChildOfClass("Humanoid") and not seen[mob.Name] then
                         seen[mob.Name] = true
@@ -281,12 +246,26 @@ local function getMobList()
     return #list > 0 and list or {"None"}
 end
 
--- ── Boss list ────────────────────────────────────────────────
+local function getMergedMobList()
+    local list = getMobList()
+    local seen = {}
+    for _, v in ipairs(list) do seen[v] = true end
 
-local BOSS_LIST       = {"Rimuru", "Sung Jinwoo", "Aizen"}
+    if type(State.selectedMob) == "table" then
+        for _, mobName in ipairs(State.selectedMob) do
+            if not seen[mobName] and mobName ~= "None" then
+                table.insert(list, mobName)
+                seen[mobName] = true
+            end
+        end
+    end
+    return list
+end
+
+local BOSS_LIST       = {"Rimuru", "Sung Jinwoo", "Aizen", "Verdant Hero", "Saber", "Sukuna", "Gojo", "Gilgamesh"}
 local BOSS_DIRECT_SET = {Aizen = true}
+local SUMMON_BOSS_SET = {["Verdant Hero"] = true, Saber = true, Sukuna = true, Gojo = true, Gilgamesh = true}
 
--- ── Island / Questline ───────────────────────────────────────
 local function getIslandList()
     local list = {}
     local fi = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Island")
@@ -317,7 +296,6 @@ local function getQuestlineChildren(name)
     return #list > 0 and list or {"None"}
 end
 
--- ── NPC list ─────────────────────────────────────────────────
 local function getNPCFolder()
     return workspace:FindFirstChild("NPC")
         or workspace:FindFirstChild("NPCs")
@@ -346,21 +324,17 @@ local function getNPCChildren(name)
             end
         end
     end
-    return #list > 0 and list or nil  -- nil = NPC is flat (no sub-children)
+    return #list > 0 and list or nil
 end
-
--- ── Target finders ───────────────────────────────────────────
 
 local function findMobTarget(targetName)
     local f = workspace:FindFirstChild("Enemies")
     if not f then return nil end
     for _, child in ipairs(f:GetChildren()) do
-        -- first level: model
         if child.Name == targetName then
             local h = child:FindFirstChildOfClass("Humanoid")
             if h and h.Health > 0 then return child end
         end
-        -- second level: folder → model
         for _, mob in ipairs(child:GetChildren()) do
             if mob.Name == targetName then
                 local h = mob:FindFirstChildOfClass("Humanoid")
@@ -381,24 +355,14 @@ local function findSpawnerBoss(bossName)
     return (h and h.Health > 0) and boss or nil
 end
 
-
 local function findDirectBoss(bossName)
     local bossFolder = workspace:FindFirstChild("Boss")
     if not bossFolder then return nil end
     local container = bossFolder:FindFirstChild(bossName)
     if not container then return nil end
-    -- go deeper to find child with same name (the actual spawned boss inside)
     local inner = container:FindFirstChild(bossName)
     if not inner then return nil end
     return inner
-end
-
--- Combined: choose path based on BOSS_DIRECT_SET
-local function findBossTarget(bossName)
-    if BOSS_DIRECT_SET[bossName] then
-        return findDirectBoss(bossName)
-    end
-    return findSpawnerBoss(bossName)
 end
 
 local JJK_SUMMON_SET = {Sukuna = true, Gojo = true}
@@ -411,10 +375,8 @@ local function findSummonBoss(bossName)
     if not spawner then return nil end
     local container = spawner:FindFirstChild(bossName)
     if not container then return nil end
-    -- container has Humanoid directly (it's a Model)
     local h = container:FindFirstChildOfClass("Humanoid")
     if h and h.Health > 0 then return container end
-    -- container is a folder → find child with Humanoid
     for _, child in ipairs(container:GetChildren()) do
         local ch = child:FindFirstChildOfClass("Humanoid")
         if ch and ch.Health > 0 then return child end
@@ -422,7 +384,15 @@ local function findSummonBoss(bossName)
     return nil
 end
 
--- ── Ore finder — hardcode workspace.Boss.Stone1.Stone ────────
+local function findBossTarget(bossName)
+    if BOSS_DIRECT_SET[bossName] then
+        return findDirectBoss(bossName)
+    elseif SUMMON_BOSS_SET[bossName] then
+        return findSummonBoss(bossName)
+    end
+    return findSpawnerBoss(bossName)
+end
+
 local function findOreTarget()
     local stone1 = workspace:FindFirstChild("Boss")
                    and workspace.Boss:FindFirstChild("Stone1")
@@ -431,7 +401,6 @@ local function findOreTarget()
     return (ore and ore.Parent) and ore or nil
 end
 
--- Find any alive mob in workspace.Enemies (used by Auto Dungeon — no name filter)
 local function findAnyMobTarget()
     local f = workspace:FindFirstChild("Enemies")
     if not f then return nil end
@@ -449,7 +418,6 @@ local function findAnyMobTarget()
     return nil
 end
 
--- Find all mobs in Enemies except Training Dummy (used by Auto Attack All Mob)
 local function findAllMobTarget()
     local f = workspace:FindFirstChild("Enemies")
     if not f then return nil end
@@ -469,17 +437,12 @@ local function findAllMobTarget()
     return nil
 end
 
-
--- Supports both Humanoid model (Rimuru/SungJinwoo) and direct Part (Aizen)
 local function isTargetAlive(target)
     if not target or not target.Parent then return false end
     local h = target:FindFirstChildOfClass("Humanoid")
     if h then return h.Health > 0 end
-    -- no Humanoid → just check Parent still exists (Aizen)
     return true
 end
-
--- ── Utility ──────────────────────────────────────────────────
 
 local function findLandPart(instance)
     if not instance then return nil end
@@ -490,24 +453,19 @@ local function findLandPart(instance)
 end
 
 local function modelRoot(m)
-    -- direct BasePart (e.g. simple part) → return as-is
     if m:IsA("BasePart") then return m end
     return m:FindFirstChild("HumanoidRootPart")
         or m:FindFirstChild("RootPart")
         or m.PrimaryPart
-        or findLandPart(m)   -- fallback for Aizen Model which has no Root/Primary
+        or findLandPart(m)
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  [FIX 1] standPos — "above" now correctly moves UP (was RightVector)
---           [NEW]  "under" method added — moves DOWN
--- ╚══════════════════════════════════════════════════════════╝
 local function standPos(targetCF)
     local p, d = targetCF.Position, State.distance
     if State.method == "above"  then return p + Vector3.new(0, d, 0)            end
     if State.method == "under"  then return p - Vector3.new(0, d, 0)            end
     if State.method == "behind" then return p - targetCF.LookVector * d         end
-    return p + targetCF.LookVector * d  -- front
+    return p + targetCF.LookVector * d
 end
 
 local function faceTarget(targetPos)
@@ -537,22 +495,13 @@ local function equipWeapon()
     end
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  FLY HELPER — enable/disable fly for Auto Mob/Boss
---  • enabled=true  → PlatformStand + BodyVelocity to hold position
---  • enabled=false → restore normal physics (prevent bounce/kick)
--- ╚══════════════════════════════════════════════════════════╝
 local _flyActive    = false
 local _noclipActive = false
 local _camClipActive = false
 
--- ── Noclip ───────────────────────────────────────────────────
--- Set CanCollide=false for all character parts
--- (must repeat every tick because server resets it back)
 local function setNoclip(enabled)
     _noclipActive = enabled
     if not enabled then
-        -- restore collision on disable
         pcall(function()
             local char = getChar()
             if not char then return end
@@ -564,11 +513,6 @@ local function setNoclip(enabled)
         end)
     end
 end
-
--- ── Camera Clip (Popper Patcher) ─────────────────────────────
--- Replaces old RenderStepped poll by patching the constant in Popper directly
--- Popper uses 0.25 as occlusion threshold → set to 0 = disable zoom-in
--- Safer: no per-frame loop, does not touch CameraMinZoomDistance
 
 local function _patchPopper(fromVal, toVal)
     pcall(function()
@@ -602,13 +546,12 @@ local function _patchPopper(fromVal, toVal)
 end
 
 local function setCameraClip(enabled)
-    -- guard: don't patch again if state has not changed
     if _camClipActive == enabled then return end
     _camClipActive = enabled
     if enabled then
-        _patchPopper(0.25, 0)   -- disable occlusion → camera does not zoom in
+        _patchPopper(0.25, 0)
     else
-        _patchPopper(0, 0.25)   -- restore → camera zooms in normally again
+        _patchPopper(0, 0.25)
     end
 end
 
@@ -630,7 +573,6 @@ local function setFly(enabled)
                 bv.MaxForce     = Vector3.new(1e9, 1e9, 1e9)
                 bv.Parent       = root
             end
-            -- always enable noclip + camera clip (no separate toggle)
             setNoclip(true)
             setCameraClip(true)
         elseif not enabled and _flyActive then
@@ -638,14 +580,12 @@ local function setFly(enabled)
             hum.PlatformStand = false
             local bv = root:FindFirstChild("_NHFlyBV")
             if bv then bv:Destroy() end
-            -- always disable noclip + camera clip when fly stops
             setNoclip(false)
             setCameraClip(false)
         end
     end)
 end
 
--- helper: find index of value in list
 local function indexOf(list, val)
     for i, v in ipairs(list) do
         if v == val then return i end
@@ -653,32 +593,18 @@ local function indexOf(list, val)
     return 1
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  AUTO EXECUTE — QUEUETELEPORT
--- ╚══════════════════════════════════════════════════════════╝
-
--- [FIX: ดึงฟังก์ชันคิวเทเลพอร์ตจาก API ของ Executor]
 local queueteleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or (getgenv and getgenv().queue_on_teleport)
 
 local TeleportCheck = false
 
 Players.LocalPlayer.OnTeleport:Connect(function(teleportState)
-    print("[AE] fired | state:", teleportState, 
-          "| autoExecute:", State.autoExecute, 
-          "| TeleportCheck:", TeleportCheck,
-          "| queueteleport:", queueteleport)
-
     if State.autoExecute and not TeleportCheck and queueteleport then
         TeleportCheck = true
         queueteleport("loadstring(game:HttpGet('" .. AE_URL .. "'))()")
     end
 end)
 
--- ╔══════════════════════════════════════════════════════════╗
---  TAB: SETTINGS
--- ╚══════════════════════════════════════════════════════════╝
 do
-
     Tabs.Settings:AddSection("General Settings")
 
     local weaponList = getWeaponList()
@@ -718,7 +644,6 @@ do
         saveState(State)
     end)
 
-    -- [FIX 2] "under" added to method list
     local methodValues = {"above", "under", "behind", "front"}
     local MethodDrop = Tabs.Settings:AddDropdown("MethodDropdown", {
         Title       = "Position Method",
@@ -737,7 +662,7 @@ do
         Description = "Studs away from the target",
         Default     = State.distance,
         Min         = 1,
-        Max         = 50,
+        Max         = 20,
         Rounding    = 1,
         Callback    = function(v)
             State.distance = v
@@ -745,7 +670,6 @@ do
         end,
     })
 
-    -- ── Skills ────────────────────────────────────────────────
     Tabs.Settings:AddParagraph({
         Title   = "Attack & Skill Settings",
         Content = "Configure Auto Attack and Auto Skill used across all farming modes.",
@@ -766,12 +690,12 @@ do
         })
     end)
 
-    local SKILL_ORDER = {z=1, x=2, c=3, v=4, r=5}
+    local SKILL_ORDER = {f=1, z=2, x=3, c=4, v=5, r=6}
 
     local SkillDrop = Tabs.Settings:AddDropdown("SkillDropdown", {
         Title       = "Select Skills",
         Description = "Pick one or more skills to use automatically",
-        Values      = {"z", "x", "c", "v", "r"},
+        Values      = {"z", "x", "c", "v", "r", "f"},
         Multi       = true,
         Default     = State.selectedSkills,
     })
@@ -797,10 +721,7 @@ do
         saveState(State)
     end)
 
-    -- ── Auto Execute ──────────────────────────────────────────
-
     Tabs.Settings:AddSection("Ui")
-
 
     local AutoExecuteToggle = Tabs.Settings:AddToggle("AutoExecute", {
         Title       = "Auto Execute on Teleport",
@@ -809,11 +730,9 @@ do
     })
     AutoExecuteToggle:OnChanged(function(val)
         State.autoExecute = val
-        TeleportCheck     = false   -- reset guard เมื่อ toggle เปลี่ยน
+        TeleportCheck     = false
         saveState(State)
     end)
-
-    -- ── Danger Zone ───────────────────────────────────────────
 
     Tabs.Settings:AddButton({
         Title       = "Unload Script",
@@ -824,12 +743,7 @@ do
     })
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  TAB: MAIN
--- ╚══════════════════════════════════════════════════════════╝
 do
-    -- ── Boss ─────────────────────────────────────────────────
-
     Tabs.Main:AddSection("Farming Modes")
 
     Tabs.Main:AddParagraph({
@@ -844,15 +758,13 @@ do
         Default = State.selectedBoss,
     })
     BossDrop:OnChanged(function(tbl)
-        -- step 1: keep currently selected bosses (in original order) if still ticked
         local newList = {}
         for _, name in ipairs(State.selectedBoss) do
             if tbl[name] then
                 table.insert(newList, name)
             end
         end
-        -- step 2: newly ticked bosses (not in previous list) → append at end
-        for _, name in ipairs(BOSS_LIST) do   -- iterate BOSS_LIST to keep stable order
+        for _, name in ipairs(BOSS_LIST) do
             if tbl[name] then
                 local found = false
                 for _, n in ipairs(newList) do
@@ -876,13 +788,12 @@ do
         State.autoBoss = val
         if State.autoBoss then
             setFly(true)
-        elseif not State.autoMob and not State.autoOre and not State.autoSummonBoss then
+        elseif not State.autoMob and not State.autoOre and not State.autoDungeon and not State.autoAttackAllMob then
             setFly(false)
         end
         saveState(State)
     end)
 
-    -- ── Ore ──────────────────────────────────────────────────
     Tabs.Main:AddSection("Ore")
 
     local AutoOreToggle = Tabs.Main:AddToggle("AutoOre", {
@@ -895,26 +806,43 @@ do
         if State.autoOre then
             setFly(true)
         else
-            if not State.autoMob and not State.autoBoss and not State.autoSummonBoss then
+            if not State.autoMob and not State.autoBoss and not State.autoDungeon and not State.autoAttackAllMob then
                 setFly(false)
             end
         end
         saveState(State)
     end)
 
-    -- ── Mob ──────────────────────────────────────────────────
     Tabs.Main:AddSection("Mob")
 
-    local mobList = getMobList()
+    local initialMobList = getMergedMobList()
 
     local MobDrop = Tabs.Main:AddDropdown("MobDropdown", {
         Title   = "Select Mob",
-        Values  = mobList,
-        Multi   = false,
-        Default = indexOf(mobList, State.selectedMob),
+        Values  = initialMobList,
+        Multi   = true,
+        Default = State.selectedMob,
     })
-    MobDrop:OnChanged(function(v)
-        State.selectedMob = v
+    
+    MobDrop:OnChanged(function(tbl)
+        local newList = {}
+        for _, name in ipairs(State.selectedMob) do
+            if tbl[name] then
+                table.insert(newList, name)
+            end
+        end
+        for name, isSelected in pairs(tbl) do
+            if isSelected then
+                local found = false
+                for _, n in ipairs(newList) do
+                    if n == name then found = true; break end
+                end
+                if not found then
+                    table.insert(newList, name)
+                end
+            end
+        end
+        State.selectedMob = newList
         saveState(State)
     end)
 
@@ -922,11 +850,8 @@ do
         Title       = "Refresh Mob",
         Description = "Reload the mob list from workspace.Enemies",
         Callback    = function()
-            local new = getMobList()
+            local new = getMergedMobList()
             MobDrop:SetValues(new)
-            MobDrop:SetValue(new[1])
-            State.selectedMob = new[1]
-            saveState(State)
             Fluent:Notify({ Title = "Mob", Content = "Refreshed — " .. #new .. " found", Duration = 3 })
         end,
     })
@@ -940,13 +865,12 @@ do
         State.autoMob = val
         if State.autoMob then
             setFly(true)
-        elseif not State.autoBoss and not State.autoOre and not State.autoSummonBoss then
+        elseif not State.autoBoss and not State.autoOre and not State.autoDungeon and not State.autoAttackAllMob then
             setFly(false)
         end
         saveState(State)
     end)
 
-    -- ── Auto Attack All Mob ───────────────────────────────────
     Tabs.Main:AddParagraph({
         Title   = "Attack All Mob",
         Content = "Careful — may sometimes get you kicked. Teleports to and attacks every alive mob in Enemies except Training Dummy.",
@@ -961,8 +885,7 @@ do
         State.autoAttackAllMob = val
         if State.autoAttackAllMob then
             setFly(true)
-        elseif not State.autoBoss and not State.autoOre
-        and not State.autoSummonBoss and not State.autoMob then
+        elseif not State.autoBoss and not State.autoOre and not State.autoDungeon and not State.autoMob then
             setFly(false)
         end
         saveState(State)
@@ -974,16 +897,10 @@ do
     end)
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  TAB: SUMMON
--- ╚══════════════════════════════════════════════════════════╝
 do
-    local SUMMON_RE_PATH = _getNet  -- use cached _getNet instead of repeated WaitForChild
-
-    -- ── Summon Rimuru ─────────────────────────────────────────
+    local SUMMON_RE_PATH = _getNet
 
     Tabs.Summon:AddSection("Summon Rimuru")
-
 
     local SlimeInput = Tabs.Summon:AddInput("SlimeAmountInput", {
         Title       = "Summon Rimuru Amount",
@@ -1025,8 +942,6 @@ do
             Fluent:Notify({ Title = "Summon Rimuru", Content = "Summoned " .. amount .. " Rimuru", Duration = 3 })
         end,
     })
-
-    -- ── Summon Boss ───────────────────────────────────────────
 
     Tabs.Summon:AddSection("Summon Bosses")
 
@@ -1072,25 +987,15 @@ do
 
     local AutoSummonBossToggle = Tabs.Summon:AddToggle("AutoSummonBoss", {
         Title       = "Auto Summon Boss",
-        Description = "Continuously summon and attack the selected boss. Yields to ServerTimeBoss if one is active.",
+        Description = "Continuously summon the selected boss.",
         Default     = State.autoSummonBoss,
     })
     AutoSummonBossToggle:OnChanged(function(val)
         State.autoSummonBoss = val
-        if State.autoSummonBoss then
-            setFly(true)
-        else
-            if not State.autoMob and not State.autoBoss and not State.autoOre then
-                setFly(false)
-            end
-        end
         saveState(State)
     end)
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  TAB: DUNGEON
--- ╚══════════════════════════════════════════════════════════╝
 do
     local DUNGEON_KEYS       = {"RAIDEN", "SHADOW", "ARTIFACT_01", "ARTIFACT_02", "ARTIFACT_03"}
     local keysname = {
@@ -1183,16 +1088,25 @@ do
 
     local AutoDungeonToggle = Tabs.Dungeon:AddToggle("AutoDungeon", {
         Title       = "Auto Dungeon",
-        Description = "Automatically teleport to and attack any mob that appears in workspace.Enemies. No mob selection needed — works inside dungeon rooms.",
+        Description = "Automatically teleport to and attack any mob in dungeon.",
         Default     = State.autoDungeon,
     })
     AutoDungeonToggle:OnChanged(function(val)
+        if val and game.PlaceId == 104761395312874 then
+            Fluent:Notify({
+                Title   = "Auto Dungeon",
+                Content = "can't auto dungeon / start because you not in dungeon ",
+                Duration = 3,
+            })
+            AutoDungeonToggle:SetValue(false)
+            return
+        end
+
         State.autoDungeon = val
         if State.autoDungeon then
             setFly(true)
         else
-            if not State.autoMob and not State.autoBoss
-            and not State.autoOre and not State.autoSummonBoss then
+            if not State.autoMob and not State.autoBoss and not State.autoOre and not State.autoAttackAllMob then
                 setFly(false)
             end
         end
@@ -1204,13 +1118,22 @@ do
         })
     end)
 
-
     local AutoStartReplayToggle = Tabs.Dungeon:AddToggle("AutoStartReplay", {
         Title       = "Auto Start & Replay",
         Description = "Automatically clicks Start whenever the dungeon start screen appears. Works for both first start and replay after a run ends.",
         Default     = State.autoStartReplay,
     })
     AutoStartReplayToggle:OnChanged(function(val)
+        if val and game.PlaceId == 104761395312874 then
+            Fluent:Notify({
+                Title   = "Auto Start & Replay",
+                Content = "can't auto dungeon / start because you not in dungeon ",
+                Duration = 3,
+            })
+            AutoStartReplayToggle:SetValue(false)
+            return
+        end
+        
         State.autoStartReplay = val
         saveState(State)
         Fluent:Notify({
@@ -1221,9 +1144,6 @@ do
     end)
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  TAB: TELEPORT
--- ╚══════════════════════════════════════════════════════════╝
 do
     Tabs.Teleport:AddSection("Island")
 
@@ -1275,7 +1195,7 @@ do
     })
 
     local selectedQuestline = ""
-    local selectedQlStage   = ""   -- [FIX 4] track stage separately
+    local selectedQlStage   = ""
 
     local SelectQlDrop = Tabs.Teleport:AddDropdown("SelectQuestline", {
         Title       = "Select Questline",
@@ -1296,7 +1216,7 @@ do
     SelectQlDrop:OnChanged(function(value)
         if value == "None" then return end
         selectedQuestline = value
-        selectedQlStage   = ""     -- reset stage when questline changes
+        selectedQlStage   = ""
         local children = getQuestlineChildren(value)
         ChildQlDrop:SetValues(children)
         ChildQlDrop:SetValue(children[1])
@@ -1338,10 +1258,6 @@ do
         end,
     })
 
-    -- ╔══════════════════════════════════════════════════════╗
-    --  NPC Teleport
-    -- ╚══════════════════════════════════════════════════════╝
-
     Tabs.Teleport:AddSection("NPC")
 
     Tabs.Teleport:AddParagraph({
@@ -1350,7 +1266,7 @@ do
     })
 
     local selectedNPC      = ""
-    local selectedNPCSub   = ""  -- used when NPC has sub-children (nested)
+    local selectedNPCSub   = ""
     local npcIsNested      = false
 
     local npcList = getNPCList()
@@ -1376,7 +1292,6 @@ do
         selectedNPC    = value
         selectedNPCSub = ""
 
-        -- check if this NPC has sub-children
         local subs = getNPCChildren(value)
         if subs then
             npcIsNested = true
@@ -1456,13 +1371,6 @@ do
     })
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  INPUT SIMULATION
--- ╚══════════════════════════════════════════════════════════╝
-
--- ╔══════════════════════════════════════════════════════════╗
---  REMOTE CACHE — WaitForChild once, no blocking on every call
--- ╚══════════════════════════════════════════════════════════╝
 local _skillRemote  = nil
 local _actionRemote = nil
 
@@ -1488,7 +1396,6 @@ local function getActionRemote()
     return _actionRemote
 end
 
--- FIX: if selectedWeapon is "None" → use the currently equipped tool instead
 local function getActiveWeapon()
     local name = State.selectedWeapon
     if name and name ~= "None" and name ~= "" then return name end
@@ -1520,18 +1427,11 @@ local function pressM1()
     end)
 end
 
-
--- Register all connections in _G so Unload can disconnect them (must init before farming loop)
 _G.__NobodyHubConnections = {}
 
--- ╔══════════════════════════════════════════════════════════╗
---  ANTI-AFK — prevent the game from kicking idle players
---  Uses LocalPlayer.Idled event → does not affect player input at all
--- ╚══════════════════════════════════════════════════════════╝
 do
     local VirtualUser = game:GetService("VirtualUser")
     local _afkConn = LocalPlayer.Idled:Connect(function()
-        -- press RMB briefly to reset the idle timer without moving the character
         pcall(function()
             VirtualUser:CaptureController()
             VirtualUser:ClickButton2(Vector2.new())
@@ -1542,10 +1442,6 @@ do
     end
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  KICK BYPASS — hook __namecall to block server kicks
---  Uses newcclosure to hide the hook from anti-cheat scans
--- ╚══════════════════════════════════════════════════════════╝
 do
     pcall(function()
         local mt = getrawmetatable(game)
@@ -1553,7 +1449,7 @@ do
         setreadonly(mt, false)
         mt.__namecall = newcclosure(function(self, ...)
             if getnamecallmethod() == "Kick" and self == LocalPlayer then
-                return  -- block kick silently
+                return
             end
             return old(self, ...)
         end)
@@ -1561,18 +1457,13 @@ do
     end)
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  FARMING LOOP
--- ╚══════════════════════════════════════════════════════════╝
 do
     local RunService   = game:GetService("RunService")
-    local ATTACK_WAIT  = 0.4   -- slightly faster attack rate
-    local SKILL_WAIT   = 0.35  -- FIX: reduced from 1s → skills fire more often
+    local ATTACK_WAIT  = 0.4
+    local SKILL_WAIT   = 0.35
     local lastSkillAt  = 0
 
-    -- currentTarget shared between farming loop and Heartbeat
     local currentTarget = nil
-    -- lastFloatPos: remembers last float position — held when mob dies
     local lastFloatPos  = nil
 
     local function fireSkills()
@@ -1580,22 +1471,19 @@ do
         task.spawn(function()
             for _, sk in ipairs(State.selectedSkills) do
                 fireSkillRemote(sk)
-                task.wait(0.15)  -- reduced from 0.25 → faster skill chain
+                task.wait(0.15)
             end
         end)
     end
 
     local _lastHbTime = 0
-    local _cachedTRoot = nil   -- cache tRoot to avoid FindFirstChild every frame
+    local _cachedTRoot = nil
 
     local _hbConn = RunService.Heartbeat:Connect(function()
-        -- throttle: run every 0.05s (~20fps) instead of 60fps
         local now = tick()
         if now - _lastHbTime < 0.05 then return end
         _lastHbTime = now
 
-        -- ── Noclip ─────────────────────────────────────────────
-        -- must repeat every tick because server can reset CanCollide at any time
         if _noclipActive then
             local char = getChar()
             if char then
@@ -1607,8 +1495,7 @@ do
             end
         end
 
-        if not (State.autoMob or State.autoBoss or State.autoSummonBoss
-                or State.autoOre or State.autoDungeon or State.autoAttackAllMob) then
+        if not (State.autoMob or State.autoBoss or State.autoOre or State.autoDungeon or State.autoAttackAllMob) then
             currentTarget = nil
             lastFloatPos  = nil
             _cachedTRoot  = nil
@@ -1618,7 +1505,6 @@ do
         local root = getRoot()
         if not root then return end
 
-        -- refresh tRoot cache when target changes or every ~0.5s
         if currentTarget and (not _cachedTRoot or _cachedTRoot.Parent == nil) then
             _cachedTRoot = modelRoot(currentTarget)
         elseif not currentTarget then
@@ -1655,22 +1541,15 @@ do
         end
     end)
 
-    -- store connection so Unload can disconnect it
     if _G.__NobodyHubConnections then
         table.insert(_G.__NobodyHubConnections, _hbConn)
     end
 
-
-
-    -- ╔════════════════════════════════════════════════════╗
-    --  MASTER FARMING LOOP (single loop — prevents teleport conflicts)
-    -- ╚════════════════════════════════════════════════════╝
     task.spawn(function()
         while true do
             task.wait(ATTACK_WAIT)
 
-            local anyAuto = State.autoMob or State.autoBoss or State.autoSummonBoss
-                         or State.autoOre or State.autoDungeon or State.autoAttackAllMob
+            local anyAuto = State.autoMob or State.autoBoss or State.autoOre or State.autoDungeon or State.autoAttackAllMob
             if not anyAuto then
                 currentTarget = nil
                 lastFloatPos  = nil
@@ -1685,7 +1564,6 @@ do
 
             local target = nil
 
-            -- ── Priority 1: Boss (ServerTimeBoss / DirectBoss) ─────────
             if State.autoBoss and #State.selectedBoss > 0 then
                 for _, bossName in ipairs(State.selectedBoss) do
                     local t = findBossTarget(bossName)
@@ -1693,29 +1571,21 @@ do
                 end
             end
 
-            -- ── Priority 2: Summon Boss ────────────────────────────────
-            if not target and State.autoSummonBoss then
-                target = findSummonBoss(State.selectedSummonBoss)
-            end
-
-            -- ── Priority 3: Ore ────────────────────────────────────────
             if not target and State.autoOre then
                 target = findOreTarget()
-                -- do not continue when ore is gone → fall through to Mob/AllMob
             end
 
-            -- ── Priority 4: Mob (named) ────────────────────────────────
-            if not target and State.autoMob
-            and State.selectedMob ~= "None" and State.selectedMob ~= "" then
-                target = findMobTarget(State.selectedMob)
+            if not target and State.autoMob and #State.selectedMob > 0 then
+                for _, mobName in ipairs(State.selectedMob) do
+                    local t = findMobTarget(mobName)
+                    if t then target = t; break end
+                end
             end
 
-            -- ── Priority 5: Attack All Mob ─────────────────────────────
             if not target and State.autoAttackAllMob then
                 target = findAllMobTarget()
             end
 
-            -- ── Priority 6: Dungeon (any mob, no filter) ───────────────
             if not target and State.autoDungeon then
                 target = findAnyMobTarget()
             end
@@ -1725,13 +1595,11 @@ do
                 continue
             end
 
-            -- update currentTarget → Heartbeat loop uses it to maintain position
             currentTarget = target
 
             local tRoot = modelRoot(target)
             if not tRoot then continue end
 
-            -- Bring Mob
             if State.bringMob then
                 pcall(function()
                     pcall(function() tRoot:SetNetworkOwner(LocalPlayer) end)
@@ -1739,7 +1607,6 @@ do
                 end)
             end
 
-            -- Teleport only once per tick — Heartbeat maintains continuously
             teleportTo(standPos(tRoot.CFrame))
             task.wait(0.1)
 
@@ -1757,9 +1624,6 @@ do
         end
     end)
 
-    -- ╔════════════════════════════════════════════════════╗
-    --  SUMMON LOOP — fires remote only, never teleports
-    -- ╚════════════════════════════════════════════════════╝
     task.spawn(function()
         local AFTER_SUMMON = 2.5
         local lastSummonAt = 0
@@ -1767,9 +1631,7 @@ do
         while true do
             task.wait(0.5)
             if not State.autoSummonBoss then continue end
-            if not isAlive() then continue end
 
-            -- always yield to ServerTimeBoss
             if State.autoBoss and #State.selectedBoss > 0 then
                 local found = false
                 for _, n in ipairs(State.selectedBoss) do
@@ -1810,8 +1672,6 @@ do
         end
     end)
 
-    -- ╔════════════════════════════════════════════════════╗
-    --  Auto Start & Replay loop
     task.spawn(function()
         local POLL_WAIT = 0.3
         while true do
@@ -1824,21 +1684,18 @@ do
                 local startCanvas = portalGui:FindFirstChild("StartCanvas")
                 if not startCanvas or not startCanvas.Visible then return end
 
-                -- StartCanvas is visible — fire Start
                 _getNet():WaitForChild("RE/PortalEvent", 10):FireServer("Start")
 
-                task.wait(1)  -- short cooldown to avoid double-firing
+                task.wait(1)
             end)
         end
     end)
 
     local _charConn = LocalPlayer.CharacterAdded:Connect(function(char)
         char:WaitForChild("HumanoidRootPart", 10)
-        currentTarget = nil  -- reset on respawn
-        _flyActive = false   -- reset flag so setFly can re-enable after respawn
-        -- if auto mob/boss is still on → re-enable fly after character loads
-        if State.autoMob or State.autoBoss or State.autoSummonBoss
-        or State.autoOre or State.autoDungeon or State.autoAttackAllMob then
+        currentTarget = nil
+        _flyActive = false
+        if State.autoMob or State.autoBoss or State.autoOre or State.autoDungeon or State.autoAttackAllMob then
             task.delay(1, function() setFly(true) end)
         end
     end)
@@ -1847,14 +1704,9 @@ do
     end
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  UNLOAD SYSTEM
--- ╚══════════════════════════════════════════════════════════╝
 _G.__NobodyHubUnload = function()
-    -- 0) disable fly first — prevents bounce after unload
     pcall(function() setFly(false) end)
 
-    -- 1) disable all flags → farming/heartbeat loops return immediately on next tick
     State.autoMob            = false
     State.autoBoss           = false
     State.autoAttack         = false
@@ -1866,7 +1718,6 @@ _G.__NobodyHubUnload = function()
     State.autoAttackAllMob   = false
     State.autoHop            = false
 
-    -- 2) disconnect all registered RunService connections
     if _G.__NobodyHubConnections then
         for _, conn in ipairs(_G.__NobodyHubConnections) do
             pcall(function() conn:Disconnect() end)
@@ -1874,15 +1725,12 @@ _G.__NobodyHubUnload = function()
         _G.__NobodyHubConnections = nil
     end
 
-    -- 3) Destroy UI — try all possible Fluent methods + scan CoreGui
     pcall(function()
-        -- Fluent window (try every possible property)
         if Window then
             pcall(function() Window:Destroy() end)
             pcall(function() Window.Gui:Destroy() end)
             pcall(function() Window.gui:Destroy() end)
         end
-        -- Scan CoreGui for any remaining Fluent ScreenGuis
         local cg = game:GetService("CoreGui")
         for _, v in ipairs(cg:GetChildren()) do
             if v:IsA("ScreenGui") then
@@ -1894,28 +1742,19 @@ _G.__NobodyHubUnload = function()
         end
     end)
     pcall(function()
-        -- our toggle button
         local gui = game:GetService("CoreGui"):FindFirstChild("FluentToggleButtonGui")
         if gui then gui:Destroy() end
     end)
 
-    -- 4) clear _G for a clean reload
     _G.__NobodyHubUnload      = nil
     _G.__NobodyHubConnections = nil
     
-    -- [FIX: ล้างสถานะว่าปิดการใช้งานไปแล้ว ให้สามารถกดรันสคริปต์ใหม่ได้]
     pcall(function() getgenv().NobodyHub_LOADED = false end) 
-
-    print("[NobodyHub] Unloaded — all scripts stopped.")
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  TAB: HOP
--- ╚══════════════════════════════════════════════════════════╝
 do
     local TeleportService = game:GetService("TeleportService")
 
-    -- ── Helper: fetch server list from Roblox API ──────────────
     local function getPublicServers(cursor)
         local url = "https://games.roblox.com/v1/games/"
                     .. game.PlaceId
@@ -1929,7 +1768,6 @@ do
         return (ok and res) or nil
     end
 
-    -- ── Helper: hop to a server with few players ──────────────
     local function hopToLow(maxPlayers)
         local data = getPublicServers()
         if not data or not data.data then
@@ -1948,7 +1786,6 @@ do
         return false
     end
 
-    -- ── Helper: hop to a random server ────────────────────────
     local function hopNormal()
         pcall(function()
             TeleportService:Teleport(game.PlaceId, LocalPlayer)
@@ -1958,7 +1795,6 @@ do
 
     Tabs.Hop:AddSection("Server Hop")
 
-    -- ── Slider: player count threshold (2-12) ─────────────────
     local HopSlider = Tabs.Hop:AddSlider("HopThresholdSlider", {
         Title       = "Max Players in Server",
         Description = "Maximum number of players in the target server (2-12)",
@@ -1972,7 +1808,6 @@ do
         end,
     })
 
-    -- ── Toggle: Auto Hop ──────────────────────────────────────
     local AutoHopToggle = Tabs.Hop:AddToggle("AutoHop", {
         Title       = "Auto Hop Server",
         Description = "Automatically hop when the player count in the current server reaches the slider value",
@@ -1988,7 +1823,6 @@ do
         })
     end)
 
-    -- ── Button: Hop Low People ────────────────────────────────
     Tabs.Hop:AddButton({
         Title       = "🔀 Server Hop Low People",
         Description = "Hop to a server with players ≤ slider value",
@@ -1997,7 +1831,6 @@ do
         end,
     })
 
-    -- ── Button: Hop Normal ────────────────────────────────────
     Tabs.Hop:AddButton({
         Title       = "🔁 Server Hop Normal",
         Description = "Instantly hop to a random new server",
@@ -2006,10 +1839,9 @@ do
         end,
     })
 
-    -- ── Auto Hop background loop ──────────────────────────────
     task.spawn(function()
         while true do
-            task.wait(5)   -- check every 5 seconds
+            task.wait(5)
             if not State.autoHop then continue end
             local count = #Players:GetPlayers()
             if count >= State.hopThreshold then
@@ -2025,12 +1857,7 @@ do
     end)
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  TAB: STATS
--- ╚══════════════════════════════════════════════════════════╝
 do
-    -- ── Boss Spawn Timer ─────────────────────────────────────
-    -- reads TimerGui.BossName.Text and TimerGui.Timer.Text
     local function getTimerGui()
         local bossFolder = workspace:FindFirstChild("Boss")
         local spawner    = bossFolder and bossFolder:FindFirstChild("ServerTimeBossSpawner")
@@ -2061,20 +1888,17 @@ local function readGuiText(parent, childName)
         Content = "Loading...",
     })
 
-    -- ── Boss Status — single paragraph, updates in realtime ──
     local StatusLabel = Tabs.Stats:AddParagraph({
         Title   = "👾 Boss Status",
         Content = "Loading...",
     })
 
-    -- ── Helper: check Stone (any ore inside Stone1?) ──────────
     local function checkStone()
         local stone1 = workspace:FindFirstChild("Boss")
                        and workspace.Boss:FindFirstChild("Stone1")
         return stone1 ~= nil and next(stone1:GetChildren()) ~= nil
     end
 
-    -- ── Realtime Poll via Heartbeat (every ~1 second) ─────────
     local _lastStatTick = 0
     local _statConn = game:GetService("RunService").Heartbeat:Connect(function()
         local now = tick()
@@ -2082,7 +1906,6 @@ local function readGuiText(parent, childName)
         _lastStatTick = now
 
         
-            -- ── Timer section ──────────────────────────
             local gui       = getTimerGui()
             local bossName  = gui and readGuiText(gui, "BossName") or "—"
             local timerText = gui and readGuiText(gui, "Timer")    or "—"
@@ -2095,7 +1918,6 @@ local function readGuiText(parent, childName)
             TimerLabel:SetTitle("⏱ Boss Spawn Timer")
             TimerLabel:SetDesc(timerIcon .. " " .. bossName .. "   🕐 " .. timerText)
 
-            -- ── Status checklist ─────────────────────
             local function ic(alive) return alive and "✅" or "❌" end
 
             local lines = {
@@ -2119,9 +1941,6 @@ local function readGuiText(parent, childName)
     end
 end
 
--- ╔══════════════════════════════════════════════════════════╗
---  FINALIZE
--- ╚══════════════════════════════════════════════════════════╝
 InterfaceManager:SetLibrary(Fluent)
 InterfaceManager:SetFolder(GAME_FOLDER)
 InterfaceManager:BuildInterfaceSection(Tabs.Settings)
@@ -2130,6 +1949,6 @@ Window:SelectTab(1)
 
 Fluent:Notify({
     Title   = "Nobody " .. Fluent.Version,
-    Content = "v4 loaded  •  Save: " .. GAME_FOLDER,
-    Duration = 5,
+    Content = "loaded  •  Save: " .. gameInfo.Name,
+    Duration = 10,
 })
