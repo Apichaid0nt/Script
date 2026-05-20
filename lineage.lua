@@ -282,8 +282,7 @@ local function getMobList()
 end
 
 -- ── Boss list ────────────────────────────────────────────────
--- BOSS_SPAWNER = workspace.Boss.ServerTimeBossSpawner.[name]
--- BOSS_DIRECT  = workspace.Boss.[name] directly (Aizen uses this)
+
 local BOSS_LIST       = {"Rimuru", "Sung Jinwoo", "Aizen"}
 local BOSS_DIRECT_SET = {Aizen = true}
 
@@ -352,7 +351,6 @@ end
 
 -- ── Target finders ───────────────────────────────────────────
 
--- Find alive mob, supports 2 levels: Enemies.[folder].[mob]
 local function findMobTarget(targetName)
     local f = workspace:FindFirstChild("Enemies")
     if not f then return nil end
@@ -373,7 +371,6 @@ local function findMobTarget(targetName)
     return nil
 end
 
--- Find boss in workspace.Boss.ServerTimeBossSpawner.[name]
 local function findSpawnerBoss(bossName)
     local bossFolder = workspace:FindFirstChild("Boss")
     local spawner    = bossFolder and bossFolder:FindFirstChild("ServerTimeBossSpawner")
@@ -384,9 +381,7 @@ local function findSpawnerBoss(bossName)
     return (h and h.Health > 0) and boss or nil
 end
 
--- Find Aizen in workspace.Boss.Aizen.[Aizen] (BasePart/Model inside — only when spawned)
--- When no boss: workspace.Boss.Aizen is empty → returns nil
--- When spawned: workspace.Boss.Aizen.Aizen exists → returns that object
+
 local function findDirectBoss(bossName)
     local bossFolder = workspace:FindFirstChild("Boss")
     if not bossFolder then return nil end
@@ -406,9 +401,6 @@ local function findBossTarget(bossName)
     return findSpawnerBoss(bossName)
 end
 
--- ── Summon Boss finder — supports BossSummoner and JJKBossSummoner ──
--- Bosses in JJK_SUMMON_SET → search in workspace.Boss.JJKBossSummoner
--- All other bosses        → search in workspace.Boss.BossSummoner
 local JJK_SUMMON_SET = {Sukuna = true, Gojo = true}
 
 local function findSummonBoss(bossName)
@@ -462,13 +454,13 @@ local function findAllMobTarget()
     local f = workspace:FindFirstChild("Enemies")
     if not f then return nil end
     for _, child in ipairs(f:GetChildren()) do
-        if child.Name == "Training Dummy" then continue end
+        if child.Name == "TrainingDummy" then continue end
         if child:FindFirstChildOfClass("Humanoid") then
             local h = child:FindFirstChildOfClass("Humanoid")
             if h and h.Health > 0 then return child end
         else
             for _, mob in ipairs(child:GetChildren()) do
-                if mob.Name == "Training Dummy" then continue end
+                if mob.Name == "TrainingDummy" then continue end
                 local h = mob:FindFirstChildOfClass("Humanoid")
                 if h and h.Health > 0 then return mob end
             end
@@ -1593,8 +1585,6 @@ do
         end)
     end
 
-    -- FIX LAG: Heartbeat runs ~60fps → throttle to ~20fps
-    -- Setting CFrame every frame was the main cause of lag
     local _lastHbTime = 0
     local _cachedTRoot = nil   -- cache tRoot to avoid FindFirstChild every frame
 
@@ -1670,17 +1660,10 @@ do
         table.insert(_G.__NobodyHubConnections, _hbConn)
     end
 
-    -- Popper patcher no longer needs a RenderStepped loop
-    -- setCameraClip patches the constant directly on enable/disable
+
 
     -- ╔════════════════════════════════════════════════════╗
     --  MASTER FARMING LOOP (single loop — prevents teleport conflicts)
-    --  Priority: Boss(1) → SummonBoss(2) → Ore(3) → Mob(4)
-    --            → AttackAllMob(5) → Dungeon(6)
-    --
-    --  Root cause of old bug: each task.spawn had its own teleportTo()
-    --  Running simultaneously → teleports collide → chaotic warping → kick
-    --  Fix: single loop chooses target by priority, teleports once
     -- ╚════════════════════════════════════════════════════╝
     task.spawn(function()
         while true do
@@ -1776,7 +1759,6 @@ do
 
     -- ╔════════════════════════════════════════════════════╗
     --  SUMMON LOOP — fires remote only, never teleports
-    --  Movement/attacking is handled by the Master Loop above
     -- ╚════════════════════════════════════════════════════╝
     task.spawn(function()
         local AFTER_SUMMON = 2.5
