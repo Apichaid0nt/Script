@@ -1,13 +1,19 @@
 -- ============================================================
 --  Nobody Hub | by Dx
---  v4 — Nested Mob + Boss Spawner + Auto Save + Unload
 -- ============================================================
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local CoreGui = game:GetService("CoreGui")
+if CoreGui:FindFirstChild("FluentToggleButtonGui") or (getgenv and getgenv().NobodyHub_LOADED) then
+    return
+end
+pcall(function() getgenv().NobodyHub_LOADED = true end)
 
 local Fluent           = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
 
 -- ── Services ─────────────────────────────────────────────────
-local CoreGui          = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
 local Players          = game:GetService("Players")
 local HttpService      = game:GetService("HttpService")
@@ -73,10 +79,6 @@ end
 -- ╔══════════════════════════════════════════════════════════╗
 --  TOGGLE BUTTON + DRAG
 -- ╚══════════════════════════════════════════════════════════╝
-
-if CoreGui:FindFirstChild("FluentToggleButtonGui") then
-    CoreGui:FindFirstChild("FluentToggleButtonGui"):Destroy()
-end
 
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name           = "FluentToggleButtonGui"
@@ -510,8 +512,8 @@ end
 -- ╚══════════════════════════════════════════════════════════╝
 local function standPos(targetCF)
     local p, d = targetCF.Position, State.distance
-    if State.method == "above"  then return p + Vector3.new(0, d, 0)            end  -- FIX: was RightVector
-    if State.method == "under"  then return p - Vector3.new(0, d, 0)            end  -- NEW
+    if State.method == "above"  then return p + Vector3.new(0, d, 0)            end
+    if State.method == "under"  then return p - Vector3.new(0, d, 0)            end
     if State.method == "behind" then return p - targetCF.LookVector * d         end
     return p + targetCF.LookVector * d  -- front
 end
@@ -663,9 +665,17 @@ end
 --  AUTO EXECUTE — QUEUETELEPORT
 -- ╚══════════════════════════════════════════════════════════╝
 
+-- [FIX: ดึงฟังก์ชันคิวเทเลพอร์ตจาก API ของ Executor]
+local queueteleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or (getgenv and getgenv().queue_on_teleport)
+
 local TeleportCheck = false
 
-Players.LocalPlayer.OnTeleport:Connect(function()
+Players.LocalPlayer.OnTeleport:Connect(function(teleportState)
+    print("[AE] fired | state:", teleportState, 
+          "| autoExecute:", State.autoExecute, 
+          "| TeleportCheck:", TeleportCheck,
+          "| queueteleport:", queueteleport)
+
     if State.autoExecute and not TeleportCheck and queueteleport then
         TeleportCheck = true
         queueteleport("loadstring(game:HttpGet('" .. AE_URL .. "'))()")
@@ -1910,6 +1920,9 @@ _G.__NobodyHubUnload = function()
     -- 4) clear _G for a clean reload
     _G.__NobodyHubUnload      = nil
     _G.__NobodyHubConnections = nil
+    
+    -- [FIX: ล้างสถานะว่าปิดการใช้งานไปแล้ว ให้สามารถกดรันสคริปต์ใหม่ได้]
+    pcall(function() getgenv().NobodyHub_LOADED = false end) 
 
     print("[NobodyHub] Unloaded — all scripts stopped.")
 end
