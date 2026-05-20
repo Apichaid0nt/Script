@@ -22,6 +22,7 @@ local GAME_NAME   = (game.Name ~= "" and game.Name or tostring(game.PlaceId))
                         :gsub("[^%w%s%-]", ""):gsub("%s+", "_")
 local GAME_FOLDER = "NobodyHub/" .. GAME_NAME
 local SAVE_FILE   = GAME_FOLDER .. "/state.json"
+local AE_URL      = "https://raw.githubusercontent.com/Apichaid0nt/Script/Main/lineage.lua"
 
 local function ensureFolder(path)
     pcall(function() if not isfolder(path) then makefolder(path) end end)
@@ -56,6 +57,7 @@ local function saveState(st)
             selectedDungeonDifficulty = st.selectedDungeonDifficulty,
             autoDungeon               = st.autoDungeon,
             autoStartReplay           = st.autoStartReplay,
+            autoExecute               = st.autoExecute,
         }
         writefile(SAVE_FILE, HttpService:JSONEncode(data))
     end)
@@ -166,7 +168,7 @@ local Tabs = {
 local Options = Fluent.Options
 
 -- ╔══════════════════════════════════════════════════════════╗
---  STATE  (โหลดค่าที่ save ไว้ หรือใช้ default)
+--  STATE  (load saved values or use defaults)
 -- ╚══════════════════════════════════════════════════════════╝
 
 local saved = loadSavedState() or {}
@@ -186,7 +188,7 @@ local State = {
     selectedBoss   = (type(saved.selectedBoss) == "table" and saved.selectedBoss) or {"Rimuru"},
     autoBoss       = saved.autoBoss       or false,
 
-    -- Auto Attack toggle — true by default
+    -- Auto Attack toggle
     autoAttack     = saved.autoAttack or false,
 
     -- Summon
@@ -210,6 +212,9 @@ local State = {
     selectedDungeonDifficulty = saved.selectedDungeonDifficulty or "Easy",
     autoDungeon               = saved.autoDungeon               or false,
     autoStartReplay           = saved.autoStartReplay           or false,
+
+    -- Auto Execute
+    autoExecute = saved.autoExecute or false,
 }
 
 -- ╔══════════════════════════════════════════════════════════╗
@@ -248,20 +253,20 @@ local function getWeaponList()
     return #list > 0 and list or {"None"}
 end
 
--- ── Mob list (รองรับ 2 ชั้น: Enemies.[folder].[mob]) ────────
+-- ── Mob list (supports 2 levels: Enemies.[folder].[mob]) ────────
 local function getMobList()
     local list, seen = {}, {}
     local f = workspace:FindFirstChild("Enemies")
     if f then
         for _, child in ipairs(f:GetChildren()) do
             if child:FindFirstChildOfClass("Humanoid") then
-                -- ชั้นแรก: เป็น model เลย
+                -- first level: direct model
                 if not seen[child.Name] then
                     seen[child.Name] = true
                     table.insert(list, child.Name)
                 end
             else
-                -- ชั้นแรกเป็น folder → ชั้นสองเป็น mob model
+                -- first level is a folder → second level is mob model
                 for _, mob in ipairs(child:GetChildren()) do
                     if mob:FindFirstChildOfClass("Humanoid") and not seen[mob.Name] then
                         seen[mob.Name] = true
@@ -276,7 +281,7 @@ end
 
 -- ── Boss list ────────────────────────────────────────────────
 -- BOSS_SPAWNER = workspace.Boss.ServerTimeBossSpawner.[name]
--- BOSS_DIRECT  = workspace.Boss.[name] โดยตรง (Aizen เป็นแบบนี้)
+-- BOSS_DIRECT  = workspace.Boss.[name] directly (Aizen uses this)
 local BOSS_LIST       = {"Rimuru", "Sung Jinwoo", "Aizen"}
 local BOSS_DIRECT_SET = {Aizen = true}
 
@@ -345,17 +350,17 @@ end
 
 -- ── Target finders ───────────────────────────────────────────
 
--- หามอนที่มีชีวิต รองรับ 2 ชั้น: Enemies.[folder].[mob]
+-- Find alive mob, supports 2 levels: Enemies.[folder].[mob]
 local function findMobTarget(targetName)
     local f = workspace:FindFirstChild("Enemies")
     if not f then return nil end
     for _, child in ipairs(f:GetChildren()) do
-        -- ชั้นแรก: model
+        -- first level: model
         if child.Name == targetName then
             local h = child:FindFirstChildOfClass("Humanoid")
             if h and h.Health > 0 then return child end
         end
-        -- ชั้นสอง: folder → model
+        -- second level: folder → model
         for _, mob in ipairs(child:GetChildren()) do
             if mob.Name == targetName then
                 local h = mob:FindFirstChildOfClass("Humanoid")
@@ -366,7 +371,7 @@ local function findMobTarget(targetName)
     return nil
 end
 
--- หา boss ใน workspace.Boss.ServerTimeBossSpawner.[name]
+-- Find boss in workspace.Boss.ServerTimeBossSpawner.[name]
 local function findSpawnerBoss(bossName)
     local bossFolder = workspace:FindFirstChild("Boss")
     local spawner    = bossFolder and bossFolder:FindFirstChild("ServerTimeBossSpawner")
@@ -377,21 +382,21 @@ local function findSpawnerBoss(bossName)
     return (h and h.Health > 0) and boss or nil
 end
 
--- หา Aizen ใน workspace.Boss.Aizen.[Aizen] (BasePart/Model ข้างใน — spawn แล้วเท่านั้น)
--- ตอนไม่มี boss: workspace.Boss.Aizen ว่างเปล่า → คืน nil
--- ตอน spawn:    workspace.Boss.Aizen.Aizen มีอยู่  → คืน object นั้น
+-- Find Aizen in workspace.Boss.Aizen.[Aizen] (BasePart/Model inside — only when spawned)
+-- When no boss: workspace.Boss.Aizen is empty → returns nil
+-- When spawned: workspace.Boss.Aizen.Aizen exists → returns that object
 local function findDirectBoss(bossName)
     local bossFolder = workspace:FindFirstChild("Boss")
     if not bossFolder then return nil end
     local container = bossFolder:FindFirstChild(bossName)
     if not container then return nil end
-    -- ลงไปหา child ที่ชื่อเดียวกัน (ตัว boss จริงที่ spawn อยู่ข้างใน)
+    -- go deeper to find child with same name (the actual spawned boss inside)
     local inner = container:FindFirstChild(bossName)
     if not inner then return nil end
     return inner
 end
 
--- รวม: เลือก path ตาม BOSS_DIRECT_SET
+-- Combined: choose path based on BOSS_DIRECT_SET
 local function findBossTarget(bossName)
     if BOSS_DIRECT_SET[bossName] then
         return findDirectBoss(bossName)
@@ -399,9 +404,9 @@ local function findBossTarget(bossName)
     return findSpawnerBoss(bossName)
 end
 
--- ── Summon Boss finder — รองรับทั้ง BossSummoner และ JJKBossSummoner ──
--- บอสที่อยู่ใน JJK_SUMMON_SET → ค้นใน workspace.Boss.JJKBossSummoner
--- บอสอื่นๆ                    → ค้นใน workspace.Boss.BossSummoner
+-- ── Summon Boss finder — supports BossSummoner and JJKBossSummoner ──
+-- Bosses in JJK_SUMMON_SET → search in workspace.Boss.JJKBossSummoner
+-- All other bosses        → search in workspace.Boss.BossSummoner
 local JJK_SUMMON_SET = {Sukuna = true, Gojo = true}
 
 local function findSummonBoss(bossName)
@@ -412,10 +417,10 @@ local function findSummonBoss(bossName)
     if not spawner then return nil end
     local container = spawner:FindFirstChild(bossName)
     if not container then return nil end
-    -- container มี Humanoid ตรงๆ (เป็น Model)
+    -- container has Humanoid directly (it's a Model)
     local h = container:FindFirstChildOfClass("Humanoid")
     if h and h.Health > 0 then return container end
-    -- container เป็น folder → หา child ที่มี Humanoid
+    -- container is a folder → find child with Humanoid
     for _, child in ipairs(container:GetChildren()) do
         local ch = child:FindFirstChildOfClass("Humanoid")
         if ch and ch.Health > 0 then return child end
@@ -450,18 +455,18 @@ local function findAnyMobTarget()
     return nil
 end
 
--- หา mob ทุกตัวในส่วน Enemies ยกเว้น Training Dummy (ใช้โดย Auto Attack All Mob)
+-- Find all mobs in Enemies except Training Dummy (used by Auto Attack All Mob)
 local function findAllMobTarget()
     local f = workspace:FindFirstChild("Enemies")
     if not f then return nil end
     for _, child in ipairs(f:GetChildren()) do
-        if child.Name == "TrainingDummy" then continue end
+        if child.Name == "Training Dummy" then continue end
         if child:FindFirstChildOfClass("Humanoid") then
             local h = child:FindFirstChildOfClass("Humanoid")
             if h and h.Health > 0 then return child end
         else
             for _, mob in ipairs(child:GetChildren()) do
-                if mob.Name == "TrainingDummy" then continue end
+                if mob.Name == "Training Dummy" then continue end
                 local h = mob:FindFirstChildOfClass("Humanoid")
                 if h and h.Health > 0 then return mob end
             end
@@ -471,12 +476,12 @@ local function findAllMobTarget()
 end
 
 
--- รองรับทั้ง Humanoid model (Rimuru/SungJinwoo) และ Part โดยตรง (Aizen)
+-- Supports both Humanoid model (Rimuru/SungJinwoo) and direct Part (Aizen)
 local function isTargetAlive(target)
     if not target or not target.Parent then return false end
     local h = target:FindFirstChildOfClass("Humanoid")
     if h then return h.Health > 0 end
-    -- ไม่มี Humanoid → เช็คแค่ว่า Parent ยังอยู่ (Aizen)
+    -- no Humanoid → just check Parent still exists (Aizen)
     return true
 end
 
@@ -491,12 +496,12 @@ local function findLandPart(instance)
 end
 
 local function modelRoot(m)
-    -- BasePart โดยตรง (เช่น simple part) → คืนตัวมันเลย
+    -- direct BasePart (e.g. simple part) → return as-is
     if m:IsA("BasePart") then return m end
     return m:FindFirstChild("HumanoidRootPart")
         or m:FindFirstChild("RootPart")
         or m.PrimaryPart
-        or findLandPart(m)   -- fallback สำหรับ Aizen Model ที่ไม่มี Root/Primary
+        or findLandPart(m)   -- fallback for Aizen Model which has no Root/Primary
 end
 
 -- ╔══════════════════════════════════════════════════════════╗
@@ -539,21 +544,21 @@ local function equipWeapon()
 end
 
 -- ╔══════════════════════════════════════════════════════════╗
---  FLY HELPER — เปิด/ปิด fly สำหรับ Auto Mob/Boss
---  • enabled=true  → PlatformStand + BodyVelocity ยึดตัวไว้
---  • enabled=false → คืน physics ปกติ (ป้องกันกระเด้งโดนเตะ)
+--  FLY HELPER — enable/disable fly for Auto Mob/Boss
+--  • enabled=true  → PlatformStand + BodyVelocity to hold position
+--  • enabled=false → restore normal physics (prevent bounce/kick)
 -- ╚══════════════════════════════════════════════════════════╝
 local _flyActive    = false
 local _noclipActive = false
 local _camClipActive = false
 
 -- ── Noclip ───────────────────────────────────────────────────
--- ตั้ง CanCollide=false ให้ทุก part ของ character
--- (ต้องวนซ้ำทุก tick เพราะ server จะ reset ค่ากลับ)
+-- Set CanCollide=false for all character parts
+-- (must repeat every tick because server resets it back)
 local function setNoclip(enabled)
     _noclipActive = enabled
     if not enabled then
-        -- คืน collision เมื่อปิด
+        -- restore collision on disable
         pcall(function()
             local char = getChar()
             if not char then return end
@@ -567,9 +572,9 @@ local function setNoclip(enabled)
 end
 
 -- ── Camera Clip (Popper Patcher) ─────────────────────────────
--- แทนที่การ poll RenderStepped เดิม ด้วยการ patch constant ใน Popper โดยตรง
--- Popper ใช้ค่า 0.25 เป็น occlusion threshold → set เป็น 0 = ปิด zoom-in
--- ปลอดภัยกว่า: ไม่วน loop ทุก frame และไม่แตะ CameraMinZoomDistance
+-- Replaces old RenderStepped poll by patching the constant in Popper directly
+-- Popper uses 0.25 as occlusion threshold → set to 0 = disable zoom-in
+-- Safer: no per-frame loop, does not touch CameraMinZoomDistance
 
 local function _patchPopper(fromVal, toVal)
     pcall(function()
@@ -603,13 +608,13 @@ local function _patchPopper(fromVal, toVal)
 end
 
 local function setCameraClip(enabled)
-    -- guard: อย่า patch ซ้ำถ้า state ไม่เปลี่ยน
+    -- guard: don't patch again if state has not changed
     if _camClipActive == enabled then return end
     _camClipActive = enabled
     if enabled then
-        _patchPopper(0.25, 0)   -- ปิด occlusion → camera ไม่ zoom in
+        _patchPopper(0.25, 0)   -- disable occlusion → camera does not zoom in
     else
-        _patchPopper(0, 0.25)   -- restore → camera กลับมา zoom in ตามปกติ
+        _patchPopper(0, 0.25)   -- restore → camera zooms in normally again
     end
 end
 
@@ -631,7 +636,7 @@ local function setFly(enabled)
                 bv.MaxForce     = Vector3.new(1e9, 1e9, 1e9)
                 bv.Parent       = root
             end
-            -- เปิด noclip + camera clip อัตโนมัติทุกครั้ง (ไม่มี toggle)
+            -- always enable noclip + camera clip (no separate toggle)
             setNoclip(true)
             setCameraClip(true)
         elseif not enabled and _flyActive then
@@ -639,14 +644,14 @@ local function setFly(enabled)
             hum.PlatformStand = false
             local bv = root:FindFirstChild("_NHFlyBV")
             if bv then bv:Destroy() end
-            -- ปิด noclip + camera clip เสมอเมื่อหยุด fly
+            -- always disable noclip + camera clip when fly stops
             setNoclip(false)
             setCameraClip(false)
         end
     end)
 end
 
--- helper: หา index ของค่าใน list
+-- helper: find index of value in list
 local function indexOf(list, val)
     for i, v in ipairs(list) do
         if v == val then return i end
@@ -655,9 +660,25 @@ local function indexOf(list, val)
 end
 
 -- ╔══════════════════════════════════════════════════════════╗
+--  AUTO EXECUTE — QUEUETELEPORT
+-- ╚══════════════════════════════════════════════════════════╝
+
+local TeleportCheck = false
+
+Players.LocalPlayer.OnTeleport:Connect(function()
+    if State.autoExecute and not TeleportCheck and queueteleport then
+        TeleportCheck = true
+        queueteleport("loadstring(game:HttpGet('" .. AE_URL .. "'))()")
+    end
+end)
+
+-- ╔══════════════════════════════════════════════════════════╗
 --  TAB: SETTINGS
 -- ╚══════════════════════════════════════════════════════════╝
 do
+
+    Tabs.Settings:AddSection("General Settings")
+
     local weaponList = getWeaponList()
 
     local WeaponDrop = Tabs.Settings:AddDropdown("WeaponDropdown", {
@@ -722,7 +743,7 @@ do
         end,
     })
 
-    -- ── Skills (ย้ายมาจาก Main tab) ──────────────────────────
+    -- ── Skills ────────────────────────────────────────────────
     Tabs.Settings:AddParagraph({
         Title   = "Attack & Skill Settings",
         Content = "Configure Auto Attack and Auto Skill used across all farming modes.",
@@ -774,14 +795,26 @@ do
         saveState(State)
     end)
 
-    -- ── Unload Button ─────────────────────────────────────────
-    Tabs.Settings:AddParagraph({
-        Title   = "Danger Zone",
-        Content = "Unload will stop all farming loops, destroy the UI, and reset everything back to normal.",
+    -- ── Auto Execute ──────────────────────────────────────────
+
+    Tabs.Settings:AddSection("Ui")
+
+
+    local AutoExecuteToggle = Tabs.Settings:AddToggle("AutoExecute", {
+        Title       = "Auto Execute on Teleport",
+        Description = "queue script ใหม่ทุกครั้งที่ teleport ต้องใช้ executor ที่รองรับ queueteleport",
+        Default     = State.autoExecute,
     })
+    AutoExecuteToggle:OnChanged(function(val)
+        State.autoExecute = val
+        TeleportCheck     = false   -- reset guard เมื่อ toggle เปลี่ยน
+        saveState(State)
+    end)
+
+    -- ── Danger Zone ───────────────────────────────────────────
 
     Tabs.Settings:AddButton({
-        Title       = "🛑 Unload Script",
+        Title       = "Unload Script",
         Description = "Immediately stops all scripts and destroys the UI.",
         Callback    = function()
             _G.__NobodyHubUnload()
@@ -794,9 +827,12 @@ end
 -- ╚══════════════════════════════════════════════════════════╝
 do
     -- ── Boss ─────────────────────────────────────────────────
+
+    Tabs.Main:AddSection("Farming Modes")
+
     Tabs.Main:AddParagraph({
         Title   = "Boss Farming",
-        Content = "Teleports to and attacks bosses in ServerTimeBossSpawner (Aizen uses a direct path). Highest priority — runs before Ore and Mob. Supports multiple selection.",
+        Content = "Teleports to and attacks bosses",
     })
 
     local BossDrop = Tabs.Main:AddDropdown("BossDropdown", {
@@ -806,15 +842,15 @@ do
         Default = State.selectedBoss,
     })
     BossDrop:OnChanged(function(tbl)
-        -- ขั้น 1: เก็บ boss ที่เลือกอยู่แล้ว (ตามลำดับเดิม) ถ้ายังติ๊กอยู่
+        -- step 1: keep currently selected bosses (in original order) if still ticked
         local newList = {}
         for _, name in ipairs(State.selectedBoss) do
             if tbl[name] then
                 table.insert(newList, name)
             end
         end
-        -- ขั้น 2: boss ที่เพิ่งติ๊กใหม่ (ไม่เคยอยู่ใน list เดิม) → append ท้าย
-        for _, name in ipairs(BOSS_LIST) do   -- วน BOSS_LIST เพื่อให้ลำดับ stable
+        -- step 2: newly ticked bosses (not in previous list) → append at end
+        for _, name in ipairs(BOSS_LIST) do   -- iterate BOSS_LIST to keep stable order
             if tbl[name] then
                 local found = false
                 for _, n in ipairs(newList) do
@@ -845,10 +881,7 @@ do
     end)
 
     -- ── Ore ──────────────────────────────────────────────────
-    Tabs.Main:AddParagraph({
-        Title   = "Ore Farming",
-        Content = "Mines Stone in workspace.Boss.Stone1. Priority 2 — only runs when no boss is active.",
-    })
+    Tabs.Main:AddSection("Ore")
 
     local AutoOreToggle = Tabs.Main:AddToggle("AutoOre", {
         Title       = "Auto Ore",
@@ -868,10 +901,7 @@ do
     end)
 
     -- ── Mob ──────────────────────────────────────────────────
-    Tabs.Main:AddParagraph({
-        Title   = "Mob Farming",
-        Content = "Farm mobs from workspace.Enemies. Lowest priority — only runs when no boss or ore is active. Supports nested folder structure.",
-    })
+    Tabs.Main:AddSection("Mob")
 
     local mobList = getMobList()
 
@@ -917,12 +947,12 @@ do
     -- ── Auto Attack All Mob ───────────────────────────────────
     Tabs.Main:AddParagraph({
         Title   = "Attack All Mob",
-        Content = "ตีมอนทุกตัวใน workspace.Enemies ข้าม Training Dummy อัตโนมัติ ทำงานพร้อมกับ mode อื่นได้",
+        Content = "Careful — may sometimes get you kicked. Teleports to and attacks every alive mob in Enemies except Training Dummy.",
     })
 
     local AutoAttackAllMobToggle = Tabs.Main:AddToggle("AutoAttackAllMob", {
         Title       = "Auto Attack All Mob",
-        Description = "Teleport และโจมตีมอนทุกตัวที่มีชีวิต ยกเว้น Training Dummy",
+        Description = "Teleport and attack every alive mob in workspace.Enemies except Training Dummy.",
         Default     = State.autoAttackAllMob,
     })
     AutoAttackAllMobToggle:OnChanged(function(val)
@@ -936,7 +966,7 @@ do
         saveState(State)
         Fluent:Notify({
             Title    = "Auto Attack All Mob",
-            Content  = State.autoAttackAllMob and "ON — ตีมอนทุกตัว" or "OFF",
+            Content  = State.autoAttackAllMob and "ON — attacking all mobs" or "OFF",
             Duration = 2,
         })
     end)
@@ -946,13 +976,12 @@ end
 --  TAB: SUMMON
 -- ╚══════════════════════════════════════════════════════════╝
 do
-    local SUMMON_RE_PATH = _getNet  -- ใช้ cache จาก _getNet แทน WaitForChild ซ้ำ
+    local SUMMON_RE_PATH = _getNet  -- use cached _getNet instead of repeated WaitForChild
 
     -- ── Summon Rimuru ─────────────────────────────────────────
-    Tabs.Summon:AddParagraph({
-        Title   = "Summon Rimuru",
-        Content = "Enter the number of Rimuru you want to summon, then press the button below.",
-    })
+
+    Tabs.Summon:AddSection("Summon Rimuru")
+
 
     local SlimeInput = Tabs.Summon:AddInput("SlimeAmountInput", {
         Title       = "Summon Rimuru Amount",
@@ -967,7 +996,7 @@ do
     end)
 
     Tabs.Summon:AddButton({
-        Title       = "✦ Summon Rimuru",
+        Title       = "Summon Rimuru",
         Description = "Summon the specified number of Rimuru",
         Callback    = function()
             local amount = tonumber(State.summonSlimeAmount)
@@ -996,10 +1025,8 @@ do
     })
 
     -- ── Summon Boss ───────────────────────────────────────────
-    Tabs.Summon:AddParagraph({
-        Title   = "Summon Boss",
-        Content = "Choose a boss and summon instantly, or enable Auto to continuously summon and attack.\nBossSummoner: Verdant Hero, Saber  •  JJKBossSummoner: Sukuna, Gojo",
-    })
+
+    Tabs.Summon:AddSection("Summon Bosses")
 
     local SUMMON_BOSS_LIST = {"Verdant Hero", "Saber", "Sukuna", "Gojo", "Gilgamesh"}
     local GILGAMESH_DIFF   = {"Easy", "Medium", "Hard", "Extreme"}
@@ -1017,7 +1044,7 @@ do
 
     local GilgameshDiffDrop = Tabs.Summon:AddDropdown("GilgameshDiffDropdown", {
         Title       = "Gilgamesh Difficulty",
-        Description = "ระดับความยากเมื่อ summon Gilgamesh (ใช้เฉพาะตอนเลือก Gilgamesh)",
+        Description = "Difficulty level when summoning Gilgamesh (only applies when Gilgamesh is selected)",
         Values      = GILGAMESH_DIFF,
         Multi       = false,
         Default     = indexOf(GILGAMESH_DIFF, State.selectedGilgameshDifficulty),
@@ -1028,7 +1055,7 @@ do
     end)
 
     Tabs.Summon:AddButton({
-        Title       = "✦ Summon Boss",
+        Title       = "Summon Boss",
         Description = "Summon the selected boss once immediately",
         Callback    = function()
             local bossName = State.selectedSummonBoss
@@ -1072,6 +1099,8 @@ do
         ARTIFACT_03 = "Trial's Key",
     }
     local DUNGEON_DIFFICULTY = {"Easy", "Medium", "Hard", "Extreme"}
+
+    Tabs.Dungeon:AddSection("Dungeon")
 
     Tabs.Dungeon:AddParagraph({
         Title   = "Dungeon Room",
@@ -1194,10 +1223,7 @@ end
 --  TAB: TELEPORT
 -- ╚══════════════════════════════════════════════════════════╝
 do
-    Tabs.Teleport:AddParagraph({
-        Title   = "Island Teleport",
-        Content = "Pick an island → press the button to teleport.",
-    })
+    Tabs.Teleport:AddSection("Island")
 
     local selectedIsland = ""
 
@@ -1239,6 +1265,7 @@ do
         end,
     })
 
+    Tabs.Teleport:AddSection("Questline")   
 
     Tabs.Teleport:AddParagraph({
         Title   = "Questline Teleport",
@@ -1312,13 +1339,16 @@ do
     -- ╔══════════════════════════════════════════════════════╗
     --  NPC Teleport
     -- ╚══════════════════════════════════════════════════════╝
+
+    Tabs.Teleport:AddSection("NPC")
+
     Tabs.Teleport:AddParagraph({
         Title   = "NPC Teleport",
         Content = "Pick an NPC → press the button to teleport.\nSource: workspace.NPC (auto-detected)",
     })
 
     local selectedNPC      = ""
-    local selectedNPCSub   = ""  -- ใช้เมื่อ NPC มี sub-children (nested)
+    local selectedNPCSub   = ""  -- used when NPC has sub-children (nested)
     local npcIsNested      = false
 
     local npcList = getNPCList()
@@ -1344,7 +1374,7 @@ do
         selectedNPC    = value
         selectedNPCSub = ""
 
-        -- ตรวจว่า NPC นี้มี sub-children ไหม
+        -- check if this NPC has sub-children
         local subs = getNPCChildren(value)
         if subs then
             npcIsNested = true
@@ -1429,7 +1459,7 @@ end
 -- ╚══════════════════════════════════════════════════════════╝
 
 -- ╔══════════════════════════════════════════════════════════╗
---  REMOTE CACHE — WaitForChild ครั้งเดียว ไม่ block ทุก call
+--  REMOTE CACHE — WaitForChild once, no blocking on every call
 -- ╚══════════════════════════════════════════════════════════╝
 local _skillRemote  = nil
 local _actionRemote = nil
@@ -1456,7 +1486,7 @@ local function getActionRemote()
     return _actionRemote
 end
 
--- FIX: ถ้า selectedWeapon เป็น "None" → ใช้ tool ที่ equipped อยู่จริงๆ แทน
+-- FIX: if selectedWeapon is "None" → use the currently equipped tool instead
 local function getActiveWeapon()
     local name = State.selectedWeapon
     if name and name ~= "None" and name ~= "" then return name end
@@ -1489,17 +1519,17 @@ local function pressM1()
 end
 
 
--- รวบรวม connections ทั้งหมดไว้ใน _G เพื่อให้ Unload ตัดได้ (ต้อง init ก่อน farming loop)
+-- Register all connections in _G so Unload can disconnect them (must init before farming loop)
 _G.__NobodyHubConnections = {}
 
 -- ╔══════════════════════════════════════════════════════════╗
---  ANTI-AFK — ป้องกันเกมเตะเมื่อ idle
---  ใช้ LocalPlayer.Idled event → ไม่กระทบ input ของ player เลย
+--  ANTI-AFK — prevent the game from kicking idle players
+--  Uses LocalPlayer.Idled event → does not affect player input at all
 -- ╚══════════════════════════════════════════════════════════╝
 do
     local VirtualUser = game:GetService("VirtualUser")
     local _afkConn = LocalPlayer.Idled:Connect(function()
-        -- กด RMB สั้นๆ เพื่อ reset idle timer โดยไม่เคลื่อนที่ตัวละคร
+        -- press RMB briefly to reset the idle timer without moving the character
         pcall(function()
             VirtualUser:CaptureController()
             VirtualUser:ClickButton2(Vector2.new())
@@ -1511,8 +1541,8 @@ do
 end
 
 -- ╔══════════════════════════════════════════════════════════╗
---  KICK BYPASS — ดัก __namecall ป้องกัน server kick player
---  ใช้ newcclosure เพื่อซ่อนร่องรอย hook จาก anti-cheat scan
+--  KICK BYPASS — hook __namecall to block server kicks
+--  Uses newcclosure to hide the hook from anti-cheat scans
 -- ╚══════════════════════════════════════════════════════════╝
 do
     pcall(function()
@@ -1534,13 +1564,13 @@ end
 -- ╚══════════════════════════════════════════════════════════╝
 do
     local RunService   = game:GetService("RunService")
-    local ATTACK_WAIT  = 0.4   -- เร็วขึ้นนิดหน่อย
-    local SKILL_WAIT   = 0.35  -- FIX: ลดลงจาก 1s → skill fire บ่อยขึ้น
+    local ATTACK_WAIT  = 0.4   -- slightly faster attack rate
+    local SKILL_WAIT   = 0.35  -- FIX: reduced from 1s → skills fire more often
     local lastSkillAt  = 0
 
-    -- currentTarget แชร์ระหว่าง farming loop กับ Heartbeat
+    -- currentTarget shared between farming loop and Heartbeat
     local currentTarget = nil
-    -- lastFloatPos: จำตำแหน่ง float ล่าสุด — ค้างไว้เมื่อ mob ตาย
+    -- lastFloatPos: remembers last float position — held when mob dies
     local lastFloatPos  = nil
 
     local function fireSkills()
@@ -1548,24 +1578,24 @@ do
         task.spawn(function()
             for _, sk in ipairs(State.selectedSkills) do
                 fireSkillRemote(sk)
-                task.wait(0.15)  -- ลดจาก 0.25 → รวดเร็วขึ้น
+                task.wait(0.15)  -- reduced from 0.25 → faster skill chain
             end
         end)
     end
 
-    -- FIX LAG: Heartbeat วิ่ง ~60fps → throttle ให้เหลือ ~20fps
-    -- การ set CFrame ทุก frame เป็นสาเหตุหลักของ lag
+    -- FIX LAG: Heartbeat runs ~60fps → throttle to ~20fps
+    -- Setting CFrame every frame was the main cause of lag
     local _lastHbTime = 0
-    local _cachedTRoot = nil   -- cache tRoot ไว้ไม่ต้อง FindFirstChild ทุก frame
+    local _cachedTRoot = nil   -- cache tRoot to avoid FindFirstChild every frame
 
     local _hbConn = RunService.Heartbeat:Connect(function()
-        -- throttle: ทำงานแค่ทุก 0.05s (~20fps) แทน 60fps
+        -- throttle: run every 0.05s (~20fps) instead of 60fps
         local now = tick()
         if now - _lastHbTime < 0.05 then return end
         _lastHbTime = now
 
         -- ── Noclip ─────────────────────────────────────────────
-        -- ต้องวนซ้ำทุก tick เพราะ server reset CanCollide กลับได้ตลอดเวลา
+        -- must repeat every tick because server can reset CanCollide at any time
         if _noclipActive then
             local char = getChar()
             if char then
@@ -1588,7 +1618,7 @@ do
         local root = getRoot()
         if not root then return end
 
-        -- รีเฟรช tRoot cache เมื่อ target เปลี่ยน หรือทุก ~0.5s
+        -- refresh tRoot cache when target changes or every ~0.5s
         if currentTarget and (not _cachedTRoot or _cachedTRoot.Parent == nil) then
             _cachedTRoot = modelRoot(currentTarget)
         elseif not currentTarget then
@@ -1625,22 +1655,22 @@ do
         end
     end)
 
-    -- เก็บ connection ไว้ให้ Unload ตัดได้
+    -- store connection so Unload can disconnect it
     if _G.__NobodyHubConnections then
         table.insert(_G.__NobodyHubConnections, _hbConn)
     end
 
-    -- Popper patcher ไม่ต้องการ RenderStepped loop อีกต่อไป
-    -- setCameraClip patch constant โดยตรงเมื่อ enable/disable
+    -- Popper patcher no longer needs a RenderStepped loop
+    -- setCameraClip patches the constant directly on enable/disable
 
     -- ╔════════════════════════════════════════════════════╗
-    --  MASTER FARMING LOOP (loop เดียว — ป้องกันวาปมั่ว)
+    --  MASTER FARMING LOOP (single loop — prevents teleport conflicts)
     --  Priority: Boss(1) → SummonBoss(2) → Ore(3) → Mob(4)
     --            → AttackAllMob(5) → Dungeon(6)
     --
-    --  สาเหตุบัคเดิม: แต่ละ task.spawn มี teleportTo() ของตัวเอง
-    --  รันพร้อมกัน → teleport ชน → วาปมั่ว → เกมเตะ
-    --  แก้: loop เดียวเลือก target priority แล้ว teleport ครั้งเดียว
+    --  Root cause of old bug: each task.spawn had its own teleportTo()
+    --  Running simultaneously → teleports collide → chaotic warping → kick
+    --  Fix: single loop chooses target by priority, teleports once
     -- ╚════════════════════════════════════════════════════╝
     task.spawn(function()
         while true do
@@ -1678,7 +1708,7 @@ do
             -- ── Priority 3: Ore ────────────────────────────────────────
             if not target and State.autoOre then
                 target = findOreTarget()
-                -- ไม่ continue เมื่อ ore หาย → fallthrough ให้ Mob/AllMob ทำงานแทน
+                -- do not continue when ore is gone → fall through to Mob/AllMob
             end
 
             -- ── Priority 4: Mob (named) ────────────────────────────────
@@ -1702,7 +1732,7 @@ do
                 continue
             end
 
-            -- อัปเดต currentTarget → Heartbeat loop ใช้ maintain position
+            -- update currentTarget → Heartbeat loop uses it to maintain position
             currentTarget = target
 
             local tRoot = modelRoot(target)
@@ -1716,7 +1746,7 @@ do
                 end)
             end
 
-            -- Teleport เพียงครั้งเดียวต่อ tick — Heartbeat maintain ต่อเนื่อง
+            -- Teleport only once per tick — Heartbeat maintains continuously
             teleportTo(standPos(tRoot.CFrame))
             task.wait(0.1)
 
@@ -1735,8 +1765,8 @@ do
     end)
 
     -- ╔════════════════════════════════════════════════════╗
-    --  SUMMON LOOP — fire remote อย่างเดียว ห้าม teleport
-    --  การเคลื่อนที่/โจมตีทำโดย Master Loop ด้านบนเท่านั้น
+    --  SUMMON LOOP — fires remote only, never teleports
+    --  Movement/attacking is handled by the Master Loop above
     -- ╚════════════════════════════════════════════════════╝
     task.spawn(function()
         local AFTER_SUMMON = 2.5
@@ -1747,7 +1777,7 @@ do
             if not State.autoSummonBoss then continue end
             if not isAlive() then continue end
 
-            -- ยิลด์ให้ ServerTimeBoss เสมอ
+            -- always yield to ServerTimeBoss
             if State.autoBoss and #State.selectedBoss > 0 then
                 local found = false
                 for _, n in ipairs(State.selectedBoss) do
@@ -1812,9 +1842,9 @@ do
 
     local _charConn = LocalPlayer.CharacterAdded:Connect(function(char)
         char:WaitForChild("HumanoidRootPart", 10)
-        currentTarget = nil  -- reset เมื่อ respawn
-        _flyActive = false   -- reset flag เพื่อให้ setFly เปิดใหม่ได้หลัง respawn
-        -- ถ้า auto mob/boss ยังเปิดอยู่ → เปิด fly ใหม่หลัง character โหลดเสร็จ
+        currentTarget = nil  -- reset on respawn
+        _flyActive = false   -- reset flag so setFly can re-enable after respawn
+        -- if auto mob/boss is still on → re-enable fly after character loads
         if State.autoMob or State.autoBoss or State.autoSummonBoss
         or State.autoOre or State.autoDungeon or State.autoAttackAllMob then
             task.delay(1, function() setFly(true) end)
@@ -1829,10 +1859,10 @@ end
 --  UNLOAD SYSTEM
 -- ╚══════════════════════════════════════════════════════════╝
 _G.__NobodyHubUnload = function()
-    -- 0) ปิด fly ก่อน — ป้องกันกระเด้งหลัง unload
+    -- 0) disable fly first — prevents bounce after unload
     pcall(function() setFly(false) end)
 
-    -- 1) ปิด flag ทุกตัว → farming/heartbeat loop จะ return ทันทีในรอบถัดไป
+    -- 1) disable all flags → farming/heartbeat loops return immediately on next tick
     State.autoMob            = false
     State.autoBoss           = false
     State.autoAttack         = false
@@ -1844,7 +1874,7 @@ _G.__NobodyHubUnload = function()
     State.autoAttackAllMob   = false
     State.autoHop            = false
 
-    -- 2) ตัด RunService connections ที่ผูกไว้
+    -- 2) disconnect all registered RunService connections
     if _G.__NobodyHubConnections then
         for _, conn in ipairs(_G.__NobodyHubConnections) do
             pcall(function() conn:Disconnect() end)
@@ -1852,15 +1882,15 @@ _G.__NobodyHubUnload = function()
         _G.__NobodyHubConnections = nil
     end
 
-    -- 3) Destroy UI — ลอง method ต่างๆ ของ Fluent + scan CoreGui ทั้งหมด
+    -- 3) Destroy UI — try all possible Fluent methods + scan CoreGui
     pcall(function()
-        -- Fluent window (ลองทุก property ที่เป็นไปได้)
+        -- Fluent window (try every possible property)
         if Window then
             pcall(function() Window:Destroy() end)
             pcall(function() Window.Gui:Destroy() end)
             pcall(function() Window.gui:Destroy() end)
         end
-        -- Scan CoreGui หา ScreenGui ของ Fluent ที่เหลืออยู่
+        -- Scan CoreGui for any remaining Fluent ScreenGuis
         local cg = game:GetService("CoreGui")
         for _, v in ipairs(cg:GetChildren()) do
             if v:IsA("ScreenGui") then
@@ -1872,16 +1902,16 @@ _G.__NobodyHubUnload = function()
         end
     end)
     pcall(function()
-        -- ปุ่ม toggle ของเรา
+        -- our toggle button
         local gui = game:GetService("CoreGui"):FindFirstChild("FluentToggleButtonGui")
         if gui then gui:Destroy() end
     end)
 
-    -- 4) ล้าง _G เพื่อให้ load ซ้ำได้สะอาด
+    -- 4) clear _G for a clean reload
     _G.__NobodyHubUnload      = nil
     _G.__NobodyHubConnections = nil
 
-    print("[NobodyHub] Unloaded — script หยุดทำงานทั้งหมดแล้ว")
+    print("[NobodyHub] Unloaded — all scripts stopped.")
 end
 
 -- ╔══════════════════════════════════════════════════════════╗
@@ -1890,7 +1920,7 @@ end
 do
     local TeleportService = game:GetService("TeleportService")
 
-    -- ── Helper: ดึงรายการ server จาก Roblox API ──────────────
+    -- ── Helper: fetch server list from Roblox API ──────────────
     local function getPublicServers(cursor)
         local url = "https://games.roblox.com/v1/games/"
                     .. game.PlaceId
@@ -1904,11 +1934,11 @@ do
         return (ok and res) or nil
     end
 
-    -- ── Helper: hop ไปยัง server ที่มีผู้เล่นน้อย ────────────
+    -- ── Helper: hop to a server with few players ──────────────
     local function hopToLow(maxPlayers)
         local data = getPublicServers()
         if not data or not data.data then
-            Fluent:Notify({ Title = "Hop", Content = "ดึง server list ไม่ได้", Duration = 3 })
+            Fluent:Notify({ Title = "Hop", Content = "Failed to fetch server list", Duration = 3 })
             return false
         end
         for _, sv in ipairs(data.data) do
@@ -1919,27 +1949,24 @@ do
                 return true
             end
         end
-        Fluent:Notify({ Title = "Hop", Content = "ไม่พบ server ที่มีคนน้อยกว่า " .. maxPlayers, Duration = 3 })
+        Fluent:Notify({ Title = "Hop", Content = "No server found with fewer than " .. maxPlayers .. " players", Duration = 3 })
         return false
     end
 
-    -- ── Helper: hop สุ่ม server ────────────────────────────────
+    -- ── Helper: hop to a random server ────────────────────────
     local function hopNormal()
         pcall(function()
             TeleportService:Teleport(game.PlaceId, LocalPlayer)
         end)
-        Fluent:Notify({ Title = "Hop", Content = "กำลัง hop ไปยัง server ใหม่...", Duration = 3 })
+        Fluent:Notify({ Title = "Hop", Content = "Hopping to a new server...", Duration = 3 })
     end
 
-    Tabs.Hop:AddParagraph({
-        Title   = "Server Hop",
-        Content = "ปรับจำนวนคนที่ต้องการใน server แล้วกด hop ได้เลย\nAuto Hop จะกระโดดอัตโนมัติเมื่อคนใน server เท่ากับค่าที่ตั้งไว้",
-    })
+    Tabs.Hop:AddSection("Server Hop")
 
-    -- ── Slider: จำนวนคนที่ต้องการ (2-12) ────────────────────
+    -- ── Slider: player count threshold (2-12) ─────────────────
     local HopSlider = Tabs.Hop:AddSlider("HopThresholdSlider", {
-        Title       = "จำนวนคนใน Server",
-        Description = "จำนวนคนสูงสุดในเซิร์ฟเวอร์ที่ต้องการ (2-12)",
+        Title       = "Max Players in Server",
+        Description = "Maximum number of players in the target server (2-12)",
         Default     = State.hopThreshold,
         Min         = 2,
         Max         = 12,
@@ -1953,7 +1980,7 @@ do
     -- ── Toggle: Auto Hop ──────────────────────────────────────
     local AutoHopToggle = Tabs.Hop:AddToggle("AutoHop", {
         Title       = "Auto Hop Server",
-        Description = "Hop อัตโนมัติเมื่อจำนวนคนใน server เท่ากับค่า slider ที่ตั้งไว้",
+        Description = "Automatically hop when the player count in the current server reaches the slider value",
         Default     = State.autoHop,
     })
     AutoHopToggle:OnChanged(function(val)
@@ -1961,7 +1988,7 @@ do
         saveState(State)
         Fluent:Notify({
             Title    = "Auto Hop",
-            Content  = State.autoHop and ("ON — hop เมื่อคน ≥ " .. State.hopThreshold) or "OFF",
+            Content  = State.autoHop and ("ON — hop when players ≥ " .. State.hopThreshold) or "OFF",
             Duration = 2,
         })
     end)
@@ -1969,7 +1996,7 @@ do
     -- ── Button: Hop Low People ────────────────────────────────
     Tabs.Hop:AddButton({
         Title       = "🔀 Server Hop Low People",
-        Description = "Hop ไปยัง server ที่มีคนน้อยกว่าหรือเท่ากับค่า slider",
+        Description = "Hop to a server with players ≤ slider value",
         Callback    = function()
             hopToLow(State.hopThreshold)
         end,
@@ -1978,7 +2005,7 @@ do
     -- ── Button: Hop Normal ────────────────────────────────────
     Tabs.Hop:AddButton({
         Title       = "🔁 Server Hop Normal",
-        Description = "Hop สุ่มไปยัง server ใหม่ทันที",
+        Description = "Instantly hop to a random new server",
         Callback    = function()
             hopNormal()
         end,
@@ -1987,13 +2014,13 @@ do
     -- ── Auto Hop background loop ──────────────────────────────
     task.spawn(function()
         while true do
-            task.wait(5)   -- ตรวจทุก 5 วินาที
+            task.wait(5)   -- check every 5 seconds
             if not State.autoHop then continue end
             local count = #Players:GetPlayers()
             if count >= State.hopThreshold then
                 Fluent:Notify({
                     Title    = "Auto Hop",
-                    Content  = "คนใน server: " .. count .. " ≥ " .. State.hopThreshold .. " — กำลัง hop...",
+                    Content  = "Players in server: " .. count .. " ≥ " .. State.hopThreshold .. " — hopping...",
                     Duration = 3,
                 })
                 task.wait(1)
@@ -2008,7 +2035,7 @@ end
 -- ╚══════════════════════════════════════════════════════════╝
 do
     -- ── Boss Spawn Timer ─────────────────────────────────────
-    -- อ่าน TimerGui.BossName.Text และ TimerGui.Timer.Text
+    -- reads TimerGui.BossName.Text and TimerGui.Timer.Text
     local function getTimerGui()
         local bossFolder = workspace:FindFirstChild("Boss")
         local spawner    = bossFolder and bossFolder:FindFirstChild("ServerTimeBossSpawner")
@@ -2039,20 +2066,20 @@ local function readGuiText(parent, childName)
         Content = "Loading...",
     })
 
-    -- ── Boss Status — paragraph เดียว อัปเดต realtime ──────
+    -- ── Boss Status — single paragraph, updates in realtime ──
     local StatusLabel = Tabs.Stats:AddParagraph({
         Title   = "👾 Boss Status",
         Content = "Loading...",
     })
 
-    -- ── Helper: เช็ค Stone (มี ore อยู่ใน Stone1 ไหม) ──────
+    -- ── Helper: check Stone (any ore inside Stone1?) ──────────
     local function checkStone()
         local stone1 = workspace:FindFirstChild("Boss")
                        and workspace.Boss:FindFirstChild("Stone1")
         return stone1 ~= nil and next(stone1:GetChildren()) ~= nil
     end
 
-    -- ── Realtime Poll via Heartbeat (ทุก ~1 วินาที) ────────────
+    -- ── Realtime Poll via Heartbeat (every ~1 second) ─────────
     local _lastStatTick = 0
     local _statConn = game:GetService("RunService").Heartbeat:Connect(function()
         local now = tick()
