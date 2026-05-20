@@ -43,10 +43,15 @@ local function saveState(st)
             selectedBoss       = st.selectedBoss,
             autoBoss           = st.autoBoss,
             autoAttack         = st.autoAttack,
-            summonSlimeAmount    = st.summonSlimeAmount,
-            selectedSummonBoss  = st.selectedSummonBoss,
-            autoSummonBoss      = st.autoSummonBoss,
-            autoOre             = st.autoOre,
+            summonSlimeAmount           = st.summonSlimeAmount,
+            selectedSummonBoss          = st.selectedSummonBoss,
+            autoSummonBoss              = st.autoSummonBoss,
+            selectedGilgameshDifficulty = st.selectedGilgameshDifficulty,
+
+            autoAttackAllMob            = st.autoAttackAllMob,
+            autoOre                     = st.autoOre,
+            hopThreshold                = st.hopThreshold,
+            autoHop                     = st.autoHop,
             selectedDungeonKey        = st.selectedDungeonKey,
             selectedDungeonDifficulty = st.selectedDungeonDifficulty,
             autoDungeon               = st.autoDungeon,
@@ -153,6 +158,7 @@ local Tabs = {
     Summon   = Window:AddTab({ Title = "Summon",   Icon = "activity"   }),
     Dungeon  = Window:AddTab({ Title = "Dungeon",  Icon = "shield"     }),
     Teleport = Window:AddTab({ Title = "Teleport", Icon = "map-pin"    }),
+    Hop      = Window:AddTab({ Title = "Hop",      Icon = "refresh-cw" }),
     Stats    = Window:AddTab({ Title = "Stats",    Icon = "bar-chart-2" }),
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings"   }),
 }
@@ -184,12 +190,20 @@ local State = {
     autoAttack     = saved.autoAttack or false,
 
     -- Summon
-    summonSlimeAmount     = saved.summonSlimeAmount     or "1",
-    selectedSummonBoss    = saved.selectedSummonBoss    or "Verdant Hero",
-    autoSummonBoss        = saved.autoSummonBoss        or false,
+    summonSlimeAmount            = saved.summonSlimeAmount            or "1",
+    selectedSummonBoss           = saved.selectedSummonBoss           or "Verdant Hero",
+    autoSummonBoss               = saved.autoSummonBoss               or false,
+    selectedGilgameshDifficulty  = saved.selectedGilgameshDifficulty  or "Easy",
+
+    -- Auto Attack All Mob
+    autoAttackAllMob = saved.autoAttackAllMob or false,
 
     -- Ore
     autoOre     = saved.autoOre     or false,
+
+    -- Hop
+    hopThreshold = saved.hopThreshold or 5,
+    autoHop      = saved.autoHop      or false,
 
     -- Dungeon
     selectedDungeonKey        = saved.selectedDungeonKey        or "RAIDEN",
@@ -436,6 +450,26 @@ local function findAnyMobTarget()
     return nil
 end
 
+-- หา mob ทุกตัวในส่วน Enemies ยกเว้น Training Dummy (ใช้โดย Auto Attack All Mob)
+local function findAllMobTarget()
+    local f = workspace:FindFirstChild("Enemies")
+    if not f then return nil end
+    for _, child in ipairs(f:GetChildren()) do
+        if child.Name == "Training Dummy" then continue end
+        if child:FindFirstChildOfClass("Humanoid") then
+            local h = child:FindFirstChildOfClass("Humanoid")
+            if h and h.Health > 0 then return child end
+        else
+            for _, mob in ipairs(child:GetChildren()) do
+                if mob.Name == "Training Dummy" then continue end
+                local h = mob:FindFirstChildOfClass("Humanoid")
+                if h and h.Health > 0 then return mob end
+            end
+        end
+    end
+    return nil
+end
+
 
 -- รองรับทั้ง Humanoid model (Rimuru/SungJinwoo) และ Part โดยตรง (Aizen)
 local function isTargetAlive(target)
@@ -509,7 +543,75 @@ end
 --  • enabled=true  → PlatformStand + BodyVelocity ยึดตัวไว้
 --  • enabled=false → คืน physics ปกติ (ป้องกันกระเด้งโดนเตะ)
 -- ╚══════════════════════════════════════════════════════════╝
-local _flyActive = false
+local _flyActive    = false
+local _noclipActive = false
+local _camClipActive = false
+
+-- ── Noclip ───────────────────────────────────────────────────
+-- ตั้ง CanCollide=false ให้ทุก part ของ character
+-- (ต้องวนซ้ำทุก tick เพราะ server จะ reset ค่ากลับ)
+local function setNoclip(enabled)
+    _noclipActive = enabled
+    if not enabled then
+        -- คืน collision เมื่อปิด
+        pcall(function()
+            local char = getChar()
+            if not char then return end
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = true
+                end
+            end
+        end)
+    end
+end
+
+-- ── Camera Clip (Popper Patcher) ─────────────────────────────
+-- แทนที่การ poll RenderStepped เดิม ด้วยการ patch constant ใน Popper โดยตรง
+-- Popper ใช้ค่า 0.25 เป็น occlusion threshold → set เป็น 0 = ปิด zoom-in
+-- ปลอดภัยกว่า: ไม่วน loop ทุก frame และไม่แตะ CameraMinZoomDistance
+
+local function _patchPopper(fromVal, toVal)
+    pcall(function()
+        local sc   = (debug and debug.setconstant)  or setconstant
+        local gc_f = (debug and debug.getconstants) or getconstants
+        local gc_g = (getgenv and getgenv().getgc)  or getgc
+        if not sc or not gc_g or not gc_f then return end
+
+        local pop = LocalPlayer.PlayerScripts
+                    :WaitForChild("PlayerModule",    5)
+                    :WaitForChild("CameraModule",    5)
+                    :WaitForChild("ZoomController",  5)
+                    :WaitForChild("Popper",          5)
+
+        for _, v in pairs(gc_g()) do
+            if type(v) == "function" then
+                local ok, env = pcall(getfenv, v)
+                if ok and env and rawget(env, "script") == pop then
+                    local ok2, consts = pcall(gc_f, v)
+                    if ok2 and consts then
+                        for i, c in pairs(consts) do
+                            if tonumber(c) == fromVal then
+                                pcall(sc, v, i, toVal)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function setCameraClip(enabled)
+    -- guard: อย่า patch ซ้ำถ้า state ไม่เปลี่ยน
+    if _camClipActive == enabled then return end
+    _camClipActive = enabled
+    if enabled then
+        _patchPopper(0.25, 0)   -- ปิด occlusion → camera ไม่ zoom in
+    else
+        _patchPopper(0, 0.25)   -- restore → camera กลับมา zoom in ตามปกติ
+    end
+end
 
 local function setFly(enabled)
     pcall(function()
@@ -529,11 +631,17 @@ local function setFly(enabled)
                 bv.MaxForce     = Vector3.new(1e9, 1e9, 1e9)
                 bv.Parent       = root
             end
+            -- เปิด noclip + camera clip อัตโนมัติทุกครั้ง (ไม่มี toggle)
+            setNoclip(true)
+            setCameraClip(true)
         elseif not enabled and _flyActive then
             _flyActive = false
             hum.PlatformStand = false
             local bv = root:FindFirstChild("_NHFlyBV")
             if bv then bv:Destroy() end
+            -- ปิด noclip + camera clip เสมอเมื่อหยุด fly
+            setNoclip(false)
+            setCameraClip(false)
         end
     end)
 end
@@ -805,6 +913,33 @@ do
         end
         saveState(State)
     end)
+
+    -- ── Auto Attack All Mob ───────────────────────────────────
+    Tabs.Main:AddParagraph({
+        Title   = "Attack All Mob",
+        Content = "ตีมอนทุกตัวใน workspace.Enemies ข้าม Training Dummy อัตโนมัติ ทำงานพร้อมกับ mode อื่นได้",
+    })
+
+    local AutoAttackAllMobToggle = Tabs.Main:AddToggle("AutoAttackAllMob", {
+        Title       = "Auto Attack All Mob",
+        Description = "Teleport และโจมตีมอนทุกตัวที่มีชีวิต ยกเว้น Training Dummy",
+        Default     = State.autoAttackAllMob,
+    })
+    AutoAttackAllMobToggle:OnChanged(function(val)
+        State.autoAttackAllMob = val
+        if State.autoAttackAllMob then
+            setFly(true)
+        elseif not State.autoBoss and not State.autoOre
+        and not State.autoSummonBoss and not State.autoMob then
+            setFly(false)
+        end
+        saveState(State)
+        Fluent:Notify({
+            Title    = "Auto Attack All Mob",
+            Content  = State.autoAttackAllMob and "ON — ตีมอนทุกตัว" or "OFF",
+            Duration = 2,
+        })
+    end)
 end
 
 -- ╔══════════════════════════════════════════════════════════╗
@@ -866,7 +1001,8 @@ do
         Content = "Choose a boss and summon instantly, or enable Auto to continuously summon and attack.\nBossSummoner: Verdant Hero, Saber  •  JJKBossSummoner: Sukuna, Gojo",
     })
 
-    local SUMMON_BOSS_LIST = {"Verdant Hero", "Saber", "Sukuna", "Gojo"}
+    local SUMMON_BOSS_LIST = {"Verdant Hero", "Saber", "Sukuna", "Gojo", "Gilgamesh"}
+    local GILGAMESH_DIFF   = {"Easy", "Medium", "Hard", "Extreme"}
 
     local SummonBossDrop = Tabs.Summon:AddDropdown("SummonBossDropdown", {
         Title   = "Select Summon Boss",
@@ -876,6 +1012,18 @@ do
     })
     SummonBossDrop:OnChanged(function(v)
         State.selectedSummonBoss = v
+        saveState(State)
+    end)
+
+    local GilgameshDiffDrop = Tabs.Summon:AddDropdown("GilgameshDiffDropdown", {
+        Title       = "Gilgamesh Difficulty",
+        Description = "ระดับความยากเมื่อ summon Gilgamesh (ใช้เฉพาะตอนเลือก Gilgamesh)",
+        Values      = GILGAMESH_DIFF,
+        Multi       = false,
+        Default     = indexOf(GILGAMESH_DIFF, State.selectedGilgameshDifficulty),
+    })
+    GilgameshDiffDrop:OnChanged(function(v)
+        State.selectedGilgameshDifficulty = v
         saveState(State)
     end)
 
@@ -1345,6 +1493,43 @@ end
 _G.__NobodyHubConnections = {}
 
 -- ╔══════════════════════════════════════════════════════════╗
+--  ANTI-AFK — ป้องกันเกมเตะเมื่อ idle
+--  ใช้ LocalPlayer.Idled event → ไม่กระทบ input ของ player เลย
+-- ╚══════════════════════════════════════════════════════════╝
+do
+    local VirtualUser = game:GetService("VirtualUser")
+    local _afkConn = LocalPlayer.Idled:Connect(function()
+        -- กด RMB สั้นๆ เพื่อ reset idle timer โดยไม่เคลื่อนที่ตัวละคร
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
+    end)
+    if _G.__NobodyHubConnections then
+        table.insert(_G.__NobodyHubConnections, _afkConn)
+    end
+end
+
+-- ╔══════════════════════════════════════════════════════════╗
+--  KICK BYPASS — ดัก __namecall ป้องกัน server kick player
+--  ใช้ newcclosure เพื่อซ่อนร่องรอย hook จาก anti-cheat scan
+-- ╚══════════════════════════════════════════════════════════╝
+do
+    pcall(function()
+        local mt = getrawmetatable(game)
+        local old = mt.__namecall
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            if getnamecallmethod() == "Kick" and self == LocalPlayer then
+                return  -- block kick silently
+            end
+            return old(self, ...)
+        end)
+        setreadonly(mt, true)
+    end)
+end
+
+-- ╔══════════════════════════════════════════════════════════╗
 --  FARMING LOOP
 -- ╚══════════════════════════════════════════════════════════╝
 do
@@ -1379,8 +1564,21 @@ do
         if now - _lastHbTime < 0.05 then return end
         _lastHbTime = now
 
+        -- ── Noclip ─────────────────────────────────────────────
+        -- ต้องวนซ้ำทุก tick เพราะ server reset CanCollide กลับได้ตลอดเวลา
+        if _noclipActive then
+            local char = getChar()
+            if char then
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide then
+                        part.CanCollide = false
+                    end
+                end
+            end
+        end
+
         if not (State.autoMob or State.autoBoss or State.autoSummonBoss
-                or State.autoOre or State.autoDungeon) then
+                or State.autoOre or State.autoDungeon or State.autoAttackAllMob) then
             currentTarget = nil
             lastFloatPos  = nil
             _cachedTRoot  = nil
@@ -1432,24 +1630,39 @@ do
         table.insert(_G.__NobodyHubConnections, _hbConn)
     end
 
-    -- farming loop ใช้ State flag ในการหยุด ไม่ต้องตัด task.spawn
-    -- (while loop จะหยุดเองเมื่อ State.autoMob/autoBoss = false)
+    -- Popper patcher ไม่ต้องการ RenderStepped loop อีกต่อไป
+    -- setCameraClip patch constant โดยตรงเมื่อ enable/disable
+
+    -- ╔════════════════════════════════════════════════════╗
+    --  MASTER FARMING LOOP (loop เดียว — ป้องกันวาปมั่ว)
+    --  Priority: Boss(1) → SummonBoss(2) → Ore(3) → Mob(4)
+    --            → AttackAllMob(5) → Dungeon(6)
+    --
+    --  สาเหตุบัคเดิม: แต่ละ task.spawn มี teleportTo() ของตัวเอง
+    --  รันพร้อมกัน → teleport ชน → วาปมั่ว → เกมเตะ
+    --  แก้: loop เดียวเลือก target priority แล้ว teleport ครั้งเดียว
+    -- ╚════════════════════════════════════════════════════╝
     task.spawn(function()
         while true do
             task.wait(ATTACK_WAIT)
 
-            if not State.autoMob and not State.autoBoss and not State.autoDungeon then
+            local anyAuto = State.autoMob or State.autoBoss or State.autoSummonBoss
+                         or State.autoOre or State.autoDungeon or State.autoAttackAllMob
+            if not anyAuto then
                 currentTarget = nil
+                lastFloatPos  = nil
                 continue
-            end            if not isAlive() then continue end
-            local root = getRoot(); if not root then continue end
+            end
+            if not isAlive() then continue end
 
-            -- Auto Equip Weapon
+            local root = getRoot()
+            if not root then continue end
+
             equipWeapon()
 
-            -- หา target: Boss priority สูงสุด → Mob ต่ำสุด
             local target = nil
 
+            -- ── Priority 1: Boss (ServerTimeBoss / DirectBoss) ─────────
             if State.autoBoss and #State.selectedBoss > 0 then
                 for _, bossName in ipairs(State.selectedBoss) do
                     local t = findBossTarget(bossName)
@@ -1457,17 +1670,31 @@ do
                 end
             end
 
-            -- Mob: ทำงานเฉพาะเมื่อไม่มี boss/ore/summonboss ที่พร้อม
-            if not target
-            and State.autoMob
-            and State.selectedMob ~= "None"
-            and State.selectedMob ~= "" then
-                -- ยิลด์ให้ SummonBoss และ Ore ก่อน
-                local sbReady = State.autoSummonBoss and findSummonBoss(State.selectedSummonBoss)
-                local oreReady = State.autoOre and findOreTarget()
-                if not sbReady and not oreReady then
-                    target = findMobTarget(State.selectedMob)
-                end
+            -- ── Priority 2: Summon Boss ────────────────────────────────
+            if not target and State.autoSummonBoss then
+                target = findSummonBoss(State.selectedSummonBoss)
+            end
+
+            -- ── Priority 3: Ore ────────────────────────────────────────
+            if not target and State.autoOre then
+                target = findOreTarget()
+                -- ไม่ continue เมื่อ ore หาย → fallthrough ให้ Mob/AllMob ทำงานแทน
+            end
+
+            -- ── Priority 4: Mob (named) ────────────────────────────────
+            if not target and State.autoMob
+            and State.selectedMob ~= "None" and State.selectedMob ~= "" then
+                target = findMobTarget(State.selectedMob)
+            end
+
+            -- ── Priority 5: Attack All Mob ─────────────────────────────
+            if not target and State.autoAttackAllMob then
+                target = findAllMobTarget()
+            end
+
+            -- ── Priority 6: Dungeon (any mob, no filter) ───────────────
+            if not target and State.autoDungeon then
+                target = findAnyMobTarget()
             end
 
             if not target then
@@ -1475,7 +1702,7 @@ do
                 continue
             end
 
-            -- อัปเดต currentTarget ให้ Heartbeat loop ใช้
+            -- อัปเดต currentTarget → Heartbeat loop ใช้ maintain position
             currentTarget = target
 
             local tRoot = modelRoot(target)
@@ -1489,13 +1716,10 @@ do
                 end)
             end
 
-            -- Teleport ไปยัง stand position
-            -- (Heartbeat จะ maintain position ต่อเนื่องระหว่าง tick สำหรับ above/under)
+            -- Teleport เพียงครั้งเดียวต่อ tick — Heartbeat maintain ต่อเนื่อง
             teleportTo(standPos(tRoot.CFrame))
             task.wait(0.1)
 
-            -- [FIX SYNC] ตรวจ State.autoAttack ทุกครั้งก่อน pressM1
-            -- State.autoAttack ถูก set โดย OnChanged(val) โดยตรง — ไม่มี delay
             if State.autoAttack then
                 pressM1()
             end
@@ -1511,19 +1735,19 @@ do
     end)
 
     -- ╔════════════════════════════════════════════════════╗
-    --  Auto Summon Boss
+    --  SUMMON LOOP — fire remote อย่างเดียว ห้าม teleport
+    --  การเคลื่อนที่/โจมตีทำโดย Master Loop ด้านบนเท่านั้น
     -- ╚════════════════════════════════════════════════════╝
     task.spawn(function()
-        local SUMMON_WAIT   = 0.5   -- poll rate
-        local AFTER_SUMMON  = 2.5   -- รอ server spawn boss
-        local lastSummonAt  = 0
+        local AFTER_SUMMON = 2.5
+        local lastSummonAt = 0
 
         while true do
-            task.wait(SUMMON_WAIT)
+            task.wait(0.5)
             if not State.autoSummonBoss then continue end
             if not isAlive() then continue end
 
-            -- Priority: ยิลด์ให้ ServerTimeBossSpawner เท่านั้น (ทั้งคู่อยู่ระดับ Boss)
+            -- ยิลด์ให้ ServerTimeBoss เสมอ
             if State.autoBoss and #State.selectedBoss > 0 then
                 local found = false
                 for _, n in ipairs(State.selectedBoss) do
@@ -1533,141 +1757,32 @@ do
             end
 
             local bossName = State.selectedSummonBoss
-            local boss     = findSummonBoss(bossName)
-
-            if not boss then
-                -- summon ได้ทุก 3 วิเพื่อไม่ spam server
+            if not findSummonBoss(bossName) then
                 local now = tick()
                 if now - lastSummonAt >= 3 then
                     lastSummonAt = now
                     pcall(function()
-                        _getNet():WaitForChild("RE/SummonEvent", 10)
-                            :FireServer("Summon", { Boss = bossName })
+                        if bossName == "Gilgamesh" then
+                            local args = {
+                                "Summon",
+                                {
+                                    Difficult = State.selectedGilgameshDifficulty,
+                                    Boss      = "Gilgamesh",
+                                }
+                            }
+                            game:GetService("ReplicatedStorage")
+                                :WaitForChild("Packages")
+                                :WaitForChild("_Index")
+                                :WaitForChild("sleitnick_net@0.2.0")
+                                :WaitForChild("net")
+                                :WaitForChild("RE/SummonEvent")
+                                :FireServer(unpack(args))
+                        else
+                            _getNet():WaitForChild("RE/SummonEvent", 10)
+                                :FireServer("Summon", { Boss = bossName })
+                        end
                     end)
-                end
-                task.wait(AFTER_SUMMON)
-                continue
-            end
-
-            -- Boss spawn แล้ว — ส่ง currentTarget ให้ Heartbeat lock ตำแหน่ง
-            currentTarget = boss
-
-            local tRoot = modelRoot(boss)
-            if not tRoot then continue end
-
-            -- Equip weapon + teleport
-            equipWeapon()
-            teleportTo(standPos(tRoot.CFrame))
-            task.wait(0.1)
-
-            -- Attack
-            if State.autoAttack then
-                pressM1()
-            end
-
-            -- Skill
-            if State.autoSkill then
-                local now = tick()
-                if now - lastSkillAt >= SKILL_WAIT then
-                    lastSkillAt = now
-                    fireSkills()
-                end
-            end
-        end
-    end)
-
-    -- ╔════════════════════════════════════════════════════╗
-    --  Auto Ore loop
-    -- ╚════════════════════════════════════════════════════╝
-    task.spawn(function()
-        while true do
-            task.wait(ATTACK_WAIT)
-            if not State.autoOre then continue end
-            if not isAlive() then continue end
-
-            -- Priority: ยิลด์ให้ ServerTimeBoss
-            if State.autoBoss and #State.selectedBoss > 0 then
-                local found = false
-                for _, n in ipairs(State.selectedBoss) do
-                    if findBossTarget(n) then found = true; break end
-                end
-                if found then continue end
-            end
-
-            -- Priority: ยิลด์ให้ SummonBoss
-            if State.autoSummonBoss
-            and findSummonBoss(State.selectedSummonBoss) then
-                continue
-            end
-
-            local ore = findOreTarget()
-            if not ore then
-                currentTarget = nil
-                task.wait(1)  -- รอ ore respawn
-                continue
-            end
-
-            currentTarget = ore
-            local tRoot   = modelRoot(ore)
-            if not tRoot then continue end
-
-            equipWeapon()
-            teleportTo(standPos(tRoot.CFrame))
-            task.wait(0.1)
-
-            if State.autoAttack then pressM1() end
-
-            if State.autoSkill then
-                local now = tick()
-                if now - lastSkillAt >= SKILL_WAIT then
-                    lastSkillAt = now
-                    fireSkills()
-                end
-            end
-        end
-    end)
-
-    -- ╔════════════════════════════════════════════════════╗
-    --  Auto Dungeon loop
-    --  Attacks every alive mob in workspace.Enemies (no filter)
-    -- ╚════════════════════════════════════════════════════╝
-    task.spawn(function()
-        while true do
-            task.wait(ATTACK_WAIT)
-            if not State.autoDungeon then continue end
-            if not isAlive() then continue end
-
-            -- Yield for ServerTimeBoss if active
-            if State.autoBoss and #State.selectedBoss > 0 then
-                local found = false
-                for _, n in ipairs(State.selectedBoss) do
-                    if findBossTarget(n) then found = true; break end
-                end
-                if found then continue end
-            end
-
-            local mob = findAnyMobTarget()
-            if not mob then
-                currentTarget = nil
-                task.wait(0.5)
-                continue
-            end
-
-            currentTarget = mob
-            local tRoot = modelRoot(mob)
-            if not tRoot then continue end
-
-            equipWeapon()
-            teleportTo(standPos(tRoot.CFrame))
-            task.wait(0.1)
-
-            if State.autoAttack then pressM1() end
-
-            if State.autoSkill then
-                local now = tick()
-                if now - lastSkillAt >= SKILL_WAIT then
-                    lastSkillAt = now
-                    fireSkills()
+                    task.wait(AFTER_SUMMON)
                 end
             end
         end
@@ -1675,8 +1790,6 @@ do
 
     -- ╔════════════════════════════════════════════════════╗
     --  Auto Start & Replay loop
-    --  Watches PortalGui.StartCanvas.Visible and fires "Start"
-    -- ╚════════════════════════════════════════════════════╝
     task.spawn(function()
         local POLL_WAIT = 0.3
         while true do
@@ -1703,7 +1816,7 @@ do
         _flyActive = false   -- reset flag เพื่อให้ setFly เปิดใหม่ได้หลัง respawn
         -- ถ้า auto mob/boss ยังเปิดอยู่ → เปิด fly ใหม่หลัง character โหลดเสร็จ
         if State.autoMob or State.autoBoss or State.autoSummonBoss
-        or State.autoOre or State.autoDungeon then
+        or State.autoOre or State.autoDungeon or State.autoAttackAllMob then
             task.delay(1, function() setFly(true) end)
         end
     end)
@@ -1720,14 +1833,16 @@ _G.__NobodyHubUnload = function()
     pcall(function() setFly(false) end)
 
     -- 1) ปิด flag ทุกตัว → farming/heartbeat loop จะ return ทันทีในรอบถัดไป
-    State.autoMob           = false
-    State.autoBoss          = false
-    State.autoAttack        = false
-    State.autoSkill         = false
-    State.autoSummonBoss    = false
-    State.autoOre           = false
-    State.autoDungeon       = false
-    State.autoStartReplay   = false
+    State.autoMob            = false
+    State.autoBoss           = false
+    State.autoAttack         = false
+    State.autoSkill          = false
+    State.autoSummonBoss     = false
+    State.autoOre            = false
+    State.autoDungeon        = false
+    State.autoStartReplay    = false
+    State.autoAttackAllMob   = false
+    State.autoHop            = false
 
     -- 2) ตัด RunService connections ที่ผูกไว้
     if _G.__NobodyHubConnections then
@@ -1767,6 +1882,125 @@ _G.__NobodyHubUnload = function()
     _G.__NobodyHubConnections = nil
 
     print("[NobodyHub] Unloaded — script หยุดทำงานทั้งหมดแล้ว")
+end
+
+-- ╔══════════════════════════════════════════════════════════╗
+--  TAB: HOP
+-- ╚══════════════════════════════════════════════════════════╝
+do
+    local TeleportService = game:GetService("TeleportService")
+
+    -- ── Helper: ดึงรายการ server จาก Roblox API ──────────────
+    local function getPublicServers(cursor)
+        local url = "https://games.roblox.com/v1/games/"
+                    .. game.PlaceId
+                    .. "/servers/Public?sortOrder=Asc&limit=100"
+        if cursor and cursor ~= "" then
+            url = url .. "&cursor=" .. cursor
+        end
+        local ok, res = pcall(function()
+            return HttpService:JSONDecode(game:HttpGet(url))
+        end)
+        return (ok and res) or nil
+    end
+
+    -- ── Helper: hop ไปยัง server ที่มีผู้เล่นน้อย ────────────
+    local function hopToLow(maxPlayers)
+        local data = getPublicServers()
+        if not data or not data.data then
+            Fluent:Notify({ Title = "Hop", Content = "ดึง server list ไม่ได้", Duration = 3 })
+            return false
+        end
+        for _, sv in ipairs(data.data) do
+            if sv.id ~= game.JobId and sv.playing <= maxPlayers then
+                pcall(function()
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, sv.id, LocalPlayer)
+                end)
+                return true
+            end
+        end
+        Fluent:Notify({ Title = "Hop", Content = "ไม่พบ server ที่มีคนน้อยกว่า " .. maxPlayers, Duration = 3 })
+        return false
+    end
+
+    -- ── Helper: hop สุ่ม server ────────────────────────────────
+    local function hopNormal()
+        pcall(function()
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        end)
+        Fluent:Notify({ Title = "Hop", Content = "กำลัง hop ไปยัง server ใหม่...", Duration = 3 })
+    end
+
+    Tabs.Hop:AddParagraph({
+        Title   = "Server Hop",
+        Content = "ปรับจำนวนคนที่ต้องการใน server แล้วกด hop ได้เลย\nAuto Hop จะกระโดดอัตโนมัติเมื่อคนใน server เท่ากับค่าที่ตั้งไว้",
+    })
+
+    -- ── Slider: จำนวนคนที่ต้องการ (2-12) ────────────────────
+    local HopSlider = Tabs.Hop:AddSlider("HopThresholdSlider", {
+        Title       = "จำนวนคนใน Server",
+        Description = "จำนวนคนสูงสุดในเซิร์ฟเวอร์ที่ต้องการ (2-12)",
+        Default     = State.hopThreshold,
+        Min         = 2,
+        Max         = 12,
+        Rounding    = 1,
+        Callback    = function(v)
+            State.hopThreshold = v
+            saveState(State)
+        end,
+    })
+
+    -- ── Toggle: Auto Hop ──────────────────────────────────────
+    local AutoHopToggle = Tabs.Hop:AddToggle("AutoHop", {
+        Title       = "Auto Hop Server",
+        Description = "Hop อัตโนมัติเมื่อจำนวนคนใน server เท่ากับค่า slider ที่ตั้งไว้",
+        Default     = State.autoHop,
+    })
+    AutoHopToggle:OnChanged(function(val)
+        State.autoHop = val
+        saveState(State)
+        Fluent:Notify({
+            Title    = "Auto Hop",
+            Content  = State.autoHop and ("ON — hop เมื่อคน ≥ " .. State.hopThreshold) or "OFF",
+            Duration = 2,
+        })
+    end)
+
+    -- ── Button: Hop Low People ────────────────────────────────
+    Tabs.Hop:AddButton({
+        Title       = "🔀 Server Hop Low People",
+        Description = "Hop ไปยัง server ที่มีคนน้อยกว่าหรือเท่ากับค่า slider",
+        Callback    = function()
+            hopToLow(State.hopThreshold)
+        end,
+    })
+
+    -- ── Button: Hop Normal ────────────────────────────────────
+    Tabs.Hop:AddButton({
+        Title       = "🔁 Server Hop Normal",
+        Description = "Hop สุ่มไปยัง server ใหม่ทันที",
+        Callback    = function()
+            hopNormal()
+        end,
+    })
+
+    -- ── Auto Hop background loop ──────────────────────────────
+    task.spawn(function()
+        while true do
+            task.wait(5)   -- ตรวจทุก 5 วินาที
+            if not State.autoHop then continue end
+            local count = #Players:GetPlayers()
+            if count >= State.hopThreshold then
+                Fluent:Notify({
+                    Title    = "Auto Hop",
+                    Content  = "คนใน server: " .. count .. " ≥ " .. State.hopThreshold .. " — กำลัง hop...",
+                    Duration = 3,
+                })
+                task.wait(1)
+                hopToLow(State.hopThreshold - 1)
+            end
+        end
+    end)
 end
 
 -- ╔══════════════════════════════════════════════════════════╗
@@ -1850,6 +2084,7 @@ local function readGuiText(parent, childName)
                 ic(findSummonBoss("Saber"))        .. "  Saber",
                 ic(findSummonBoss("Sukuna"))       .. "  Sukuna",
                 ic(findSummonBoss("Gojo"))         .. "  Gojo",
+                ic(findSummonBoss("Gilgamesh"))    .. "  Gilgamesh",
                 ic(checkStone())                   .. "  Stone",
             }
 
