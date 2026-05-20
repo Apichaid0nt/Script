@@ -33,17 +33,17 @@ local function saveState(st)
         ensureFolder("NobodyHub")
         ensureFolder(GAME_FOLDER)
         local data = {
-            selectedWeapon = st.selectedWeapon,
-            bringMob       = st.bringMob,
-            method         = st.method,
-            distance       = st.distance,
-            selectedSkills = st.selectedSkills,
-            autoSkill      = st.autoSkill,
-            selectedMob    = st.selectedMob,
-            autoMob        = st.autoMob,
-            selectedBoss       = st.selectedBoss,
-            autoBoss           = st.autoBoss,
-            autoAttack         = st.autoAttack,
+            selectedWeapon              = st.selectedWeapon,
+            bringMob                    = st.bringMob,
+            method                      = st.method,
+            distance                    = st.distance,
+            selectedSkills              = st.selectedSkills,
+            autoSkill                   = st.autoSkill,
+            selectedMob                 = st.selectedMob,
+            autoMob                     = st.autoMob,
+            selectedBoss                = st.selectedBoss,
+            autoBoss                    = st.autoBoss,
+            autoAttack                  = st.autoAttack,
             summonSlimeAmount           = st.summonSlimeAmount,
             selectedSummonBoss          = st.selectedSummonBoss,
             autoSummonBoss              = st.autoSummonBoss,
@@ -52,11 +52,13 @@ local function saveState(st)
             autoOre                     = st.autoOre,
             hopThreshold                = st.hopThreshold,
             autoHop                     = st.autoHop,
-            selectedDungeonKey        = st.selectedDungeonKey,
-            selectedDungeonDifficulty = st.selectedDungeonDifficulty,
-            autoDungeon               = st.autoDungeon,
-            autoStartReplay           = st.autoStartReplay,
-            autoExecute               = st.autoExecute,
+            selectedDungeonKey          = st.selectedDungeonKey,
+            selectedDungeonDifficulty   = st.selectedDungeonDifficulty,
+            autoDungeon                 = st.autoDungeon,
+            autoStartReplay             = st.autoStartReplay,
+            autoExecute                 = st.autoExecute,
+            selectedShopItems           = st.selectedShopItems,
+            autoBuyItem                 = st.autoBuyItem,
         }
         writefile(SAVE_FILE, HttpService:JSONEncode(data))
     end)
@@ -144,6 +146,7 @@ end)
 
 local Tabs = {
     Main     = Window:AddTab({ Title = "Main",     Icon = "book"       }),
+    Shop     = Window:AddTab({ Title = "Shop",     Icon = "shopping-cart"}),
     Summon   = Window:AddTab({ Title = "Summon",   Icon = "activity"   }),
     Dungeon  = Window:AddTab({ Title = "Dungeon",  Icon = "shield"     }),
     Teleport = Window:AddTab({ Title = "Teleport", Icon = "map-pin"    }),
@@ -188,7 +191,10 @@ local State = {
     autoDungeon               = saved.autoDungeon               or false,
     autoStartReplay           = saved.autoStartReplay           or false,
 
-    autoExecute = saved.autoExecute or false,
+    autoExecute = saved.autoExecute or true,
+
+    selectedShopItems = (type(saved.selectedShopItems) == "table" and saved.selectedShopItems) or {},
+    autoBuyItem       = saved.autoBuyItem or false,
 }
 
 local function getChar()
@@ -894,6 +900,113 @@ do
             Content  = State.autoAttackAllMob and "ON — attacking all mobs" or "OFF",
             Duration = 2,
         })
+    end)
+end
+
+do
+    Tabs.Shop:AddSection("Merchant Shop")
+    
+    local currentShopItems = {}
+    local shopItemMap = {}
+    
+    local function refreshShopData()
+        currentShopItems = {}
+        shopItemMap = {}
+        pcall(function()
+            local mList = LocalPlayer.PlayerGui.ScreenGui.Merchant.MerchantFrame.Main.MerchantList
+            for _, child in ipairs(mList:GetChildren()) do
+                if child.Name ~= "UIGridLayout" and child.Name ~= "UIPadding" and child.Name ~= "Template" then
+                    local itemName = child.Name
+                    local priceStr = ""
+                    local countStr = ""
+                    
+                    pcall(function() priceStr = child.Req.Text end)
+                    pcall(function() countStr = child.Container[itemName].Default.ItemCount.Text end)
+                    
+                    local display = itemName .. "-" .. priceStr .. " [" .. countStr .. "]"
+                    table.insert(currentShopItems, display)
+                    shopItemMap[display] = itemName
+                end
+            end
+        end)
+        if #currentShopItems == 0 then table.insert(currentShopItems, "None") end
+    end
+    
+    refreshShopData()
+    
+    local ShopDrop = Tabs.Shop:AddDropdown("ShopDropdown", {
+        Title   = "Select Items to Buy",
+        Values  = currentShopItems,
+        Multi   = true,
+        Default = State.selectedShopItems,
+    })
+    
+    ShopDrop:OnChanged(function(tbl)
+        local newList = {}
+        for name, isSelected in pairs(tbl) do
+            if isSelected then table.insert(newList, name) end
+        end
+        State.selectedShopItems = newList
+        saveState(State)
+    end)
+    
+    Tabs.Shop:AddButton({
+        Title    = "Refresh Item List",
+        Callback = function()
+            refreshShopData()
+            ShopDrop:SetValues(currentShopItems)
+            Fluent:Notify({ Title = "Shop", Content = "List Refreshed", Duration = 2 })
+        end,
+    })
+    
+    local AutoBuyToggle = Tabs.Shop:AddToggle("AutoBuyItem", {
+        Title   = "Auto Buy Item",
+        Default = State.autoBuyItem,
+    })
+    
+    AutoBuyToggle:OnChanged(function(val)
+        State.autoBuyItem = val
+        saveState(State)
+    end)
+    
+    task.spawn(function()
+        while true do
+            task.wait(0.5)
+            if State.autoBuyItem and #State.selectedShopItems > 0 then
+                for _, displayStr in ipairs(State.selectedShopItems) do
+                    if not State.autoBuyItem then break end
+                    
+                    local rawItemName = shopItemMap[displayStr]
+                    if rawItemName then
+                        local countText = ""
+                        local isAvailable = false
+                        
+                        pcall(function()
+                            countText = LocalPlayer.PlayerGui.ScreenGui.Merchant.MerchantFrame.Main.MerchantList[rawItemName].Container[rawItemName].Default.ItemCount.Text
+                        end)
+                        
+                        local num = string.match(countText, "%d+")
+                        if num and tonumber(num) > 0 then
+                            isAvailable = true
+                        end
+                        
+                        if isAvailable then
+                            pcall(function()
+                                local args = {
+                                    "Buy",
+                                    {
+                                        Item = rawItemName,
+                                        Amount = 1
+                                    }
+                                }
+                                game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("sleitnick_net@0.2.0"):WaitForChild("net"):WaitForChild("RE/MerchantEvent"):FireServer(unpack(args))
+                            end)
+                            task.wait(0.2)
+                        end
+                    end
+                end
+            end
+        end
     end)
 end
 
@@ -1717,6 +1830,7 @@ _G.__NobodyHubUnload = function()
     State.autoStartReplay    = false
     State.autoAttackAllMob   = false
     State.autoHop            = false
+    State.autoBuyItem        = false
 
     if _G.__NobodyHubConnections then
         for _, conn in ipairs(_G.__NobodyHubConnections) do
