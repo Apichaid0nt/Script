@@ -676,10 +676,7 @@ do
         end,
     })
 
-    Tabs.Settings:AddParagraph({
-        Title   = "Attack & Skill Settings",
-        Content = "Configure Auto Attack and Auto Skill used across all farming modes.",
-    })
+
 
     local AutoAttackToggle = Tabs.Settings:AddToggle("AutoAttack", {
         Title       = "Auto Attack (M1)",
